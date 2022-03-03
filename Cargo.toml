@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 bevy = { version = "0.6", features = ["dynamic"] } # Remove the dynamic feature for debugging.
+#bevy = { version = "0.6" }
+bevy_mod_picking = "0.5.4"
 
 # (https://bevy-cheatbook.github.io/pitfalls/performance.html):
 # Enable only a small amount of optimization in debug mode

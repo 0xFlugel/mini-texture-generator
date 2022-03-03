@@ -14,13 +14,17 @@
 //! recursively resolving its the values for all pixel positions per input connector.
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
-use bevy::core::FixedTimestep;
-use bevy::input::mouse::MouseButtonInput;
-use bevy::input::ElementState;
-use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::sprite::MaterialMesh2dBundle;
-use std::default::Default;
+use bevy::render::camera::ScalingMode;
+use bevy::{
+    core::FixedTimestep,
+    input::mouse::MouseButtonInput,
+    input::ElementState,
+    prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    sprite::{Mesh2dHandle, SpecializedMaterial2d},
+    text::Text2dSize,
+};
+use bevy_mod_picking::*;
 use std::ops::Range;
 
 /// The resolution per axis of the texture.
@@ -39,6 +43,52 @@ const PIPELINE_ELEMENT_WIDTH: f32 = 150.0;
 const PIPELINE_ELEMENT_HEIGHT: f32 = 50.0;
 const CONNECTOR_SIZE: f32 = 15.0;
 
+#[derive(Bundle)]
+struct MyUIBundle<M: SpecializedMaterial2d> {
+    elem: MyUIElement,
+    // From MaterialMesh2dBundle
+    mesh: Mesh2dHandle,
+    material: Handle<M>,
+    transform: Transform,
+    global_transform: GlobalTransform,
+    visibility: Visibility,
+    computed_visibility: ComputedVisibility,
+}
+
+impl<M: SpecializedMaterial2d> MyUIBundle<M> {
+    fn new(mesh: Mesh2dHandle, material: Handle<M>, transform: Transform) -> Self {
+        Self {
+            elem: MyUIElement,
+            mesh,
+            material,
+            transform,
+            global_transform: Default::default(),
+            visibility: Default::default(),
+            computed_visibility: Default::default(),
+        }
+    }
+}
+
+/// Use the bevy-ui components. maybe we can use the bevy plugin to get the inputs w/o impl them.
+#[derive(Bundle, Default)]
+struct ButtonMechanics {
+    interaction: MyInteraction,
+}
+#[derive(Component)]
+enum MyInteraction {
+    None,
+    Clicked,
+}
+impl Default for MyInteraction {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Entities with this marker are part of my custom UI. Their size is given in local coordinates and
+/// in unit coordinates (-1..1 on X and Y axis).
+#[derive(Component)]
+struct MyUIElement;
 /// Entities with this component spawn new elements with the contained effect instead of begin
 /// dragged around themselfes.
 #[derive(Component)]
@@ -50,9 +100,6 @@ struct PipelineElement(EffectType);
 /// A marker for the texure to write to.
 #[derive(Component)]
 struct GeneratedTexture;
-/// The entity with this component is the root panel for the UI.
-#[derive(Component)]
-struct RootPanel;
 /// A marker for the background panel to react to clicks.
 #[derive(Component)]
 struct PipelineBackground;
@@ -93,10 +140,11 @@ struct Inputs(Vec<Entity>);
 struct Outputs(Vec<Entity>);
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugin(TrackMouseLocation)
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins)
         .add_startup_system(setup)
+        .add_plugins(DefaultPickingPlugins)
+        .add_plugin(MouseInputPlugin)
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(1.0 / 60.0))
@@ -113,8 +161,9 @@ fn main() {
         .add_system(highlight_snapping_connector)
         .add_system(visualize_highlighted_connector)
         .add_system(stop_connecting)
-        .add_system(visualize_connections)
-        .run();
+        .add_system(visualize_connections);
+    dbg!();
+    app.run();
 }
 
 /// Start building a connection (attached to the clicked connector).
@@ -259,287 +308,245 @@ fn visualize_connections(
     mut quad_handle: Local<Option<Handle<Mesh>>>,
     mouse_pos: Res<MousePosition>,
 ) {
-    const CONNECTION_WIDTH: f32 = 10.0;
-
-    let connector_center = |connector_entity: &Entity| -> Vec2 { todo!() };
-
-    let handle =
-        quad_handle.get_or_insert_with(|| mesh_assets.add(Mesh::from(shape::Quad::default())));
-    for Connection {
-        input_connector,
-        output_connector,
-    } in connections.iter()
-    {
-        let start: Vec2 = connector_center(output_connector);
-        let end: Vec2 = input_connector
-            .as_ref()
-            .map(connector_center)
-            .unwrap_or_else(|| mouse_pos.position);
-        let distance = end.distance(start);
-
-        cmds.spawn_bundle(MaterialMesh2dBundle {
-            mesh: handle.clone().into(),
-            material: material_assets.add(ColorMaterial {
-                color: Color::BLUE,
-                ..Default::default()
-            }),
-            transform: Transform {
-                translation: Vec2::new().extend(0.0),
-                scale: Vec3::new(CONNECTION_WIDTH, distance, 1.0),
-                rotation: Quat::from_rotation_z(),
-            },
-            ..Default::default()
-        });
-    }
+    // const CONNECTION_WIDTH: f32 = 10.0;
+    //
+    // let connector_center = |connector_entity: &Entity| -> Vec2 { todo!() };
+    //
+    // let handle =
+    //     quad_handle.get_or_insert_with(|| mesh_assets.add(Mesh::from(shape::Quad::default())));
+    // for Connection {
+    //     input_connector,
+    //     output_connector,
+    // } in connections.iter()
+    // {
+    //     let start: Vec2 = connector_center(output_connector);
+    //     let end: Vec2 = input_connector
+    //         .as_ref()
+    //         .map(connector_center)
+    //         .unwrap_or_else(|| mouse_pos.position);
+    //     let distance = end.distance(start);
+    //
+    //     cmds.spawn_bundle(MaterialMesh2dBundle {
+    //         mesh: handle.clone().into(),
+    //         material: material_assets.add(ColorMaterial {
+    //             color: Color::BLUE,
+    //             ..Default::default()
+    //         }),
+    //         transform: Transform {
+    //             translation: Vec2::new().extend(0.0),
+    //             scale: Vec3::new(CONNECTION_WIDTH, distance, 1.0),
+    //             rotation: Quat::from_rotation_z(),
+    //         },
+    //         ..Default::default()
+    //     });
+    // }
 }
 
-fn setup(mut cmds: Commands, assets: Res<AssetServer>) {
-    cmds.spawn_bundle(UiCameraBundle::default());
-    cmds.spawn_bundle(OrthographicCameraBundle::new_2d());
-    let row_style = Style {
-        flex_direction: FlexDirection::Row,
-        align_items: AlignItems::FlexStart,
-        size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
-        ..Default::default()
-    };
-    let column_style = Style {
-        flex_direction: FlexDirection::Column,
-        size: Size::new(Val::Auto, Val::Percent(100.0)),
-        justify_content: JustifyContent::FlexEnd,
-        padding: Rect {
-            right: Val::Px(5.0),
-            left: Val::Px(5.0),
+fn setup(
+    mut cmds: Commands,
+    assets: Res<AssetServer>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    fn spawn_sidebar(
+        cmds: &mut Commands,
+        assets: &Res<AssetServer>,
+        materials: &mut ResMut<Assets<ColorMaterial>>,
+        mut meshes: &mut ResMut<Assets<Mesh>>,
+        mut images: &mut ResMut<Assets<Image>>,
+    ) {
+        let sidebar = cmds
+            .spawn_bundle(MyUIBundle::new(
+                Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(1.0, 1.0))))),
+                materials.add(ColorMaterial::from(SIDEBAR)),
+                // Left screen side with 1/8 width and full height.
+                Transform {
+                    translation: Vec3::new(-15. / 16., 0.0, 0.0),
+                    rotation: Quat::from_rotation_z(0.0),
+                    scale: Vec3::new(0.25, 2.0, 1.0),
+                },
+            ))
+            .id();
+        for effect in EffectType::all() {
+            let pipeline_element = spawn_pipeline_element(
+                effect,
+                Vec2::new(-15. / 16., 0.0),
+                cmds,
+                assets,
+                materials,
+                meshes,
+                images,
+            );
+            cmds.entity(pipeline_element).insert(SidebarButton(*effect));
+            cmds.entity(sidebar).add_child(pipeline_element);
+        }
+    }
+
+    cmds.spawn_bundle(OrthographicCameraBundle {
+        orthographic_projection: OrthographicProjection {
+            scaling_mode: ScalingMode::None,
             ..Default::default()
         },
-        ..row_style
-    };
-    let column_center_style = Style {
-        flex_direction: FlexDirection::Column,
-        align_items: AlignItems::Center,
-        justify_content: JustifyContent::SpaceBetween,
-        size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
-        ..Default::default()
-    };
-    cmds.spawn_bundle(NodeBundle {
-        style: row_style,
-        color: UiColor(PIPELINE_BG),
-        ..Default::default()
+        ..OrthographicCameraBundle::new_2d()
     })
-    .insert(RootPanel)
-    .with_children(|root| {
-        let mut sidebar = root.spawn_bundle(NodeBundle {
-            style: column_style,
-            color: UiColor(SIDEBAR),
-            ..Default::default()
-        });
-        sidebar.with_children(|sidebar| {
-            for (text, effect) in EffectType::all().iter().map(|e| (e.name(), e)) {
-                sidebar
-                    .spawn_bundle(ButtonBundle {
-                        style: Style {
-                            flex_direction: FlexDirection::ColumnReverse,
-                            size: Size::new(Val::Percent(100.0), Val::Auto),
-                            margin: Rect {
-                                top: Val::Px(5.0),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })
-                    .insert(SidebarButton(*effect))
-                    .with_children(|btn| {
-                        btn.spawn_bundle(TextBundle {
-                            style: Style {
-                                size: Size::new(Val::Undefined, Val::Px(25.)),
-                                margin: Rect {
-                                    left: Val::Px(5.0),
-                                    right: Val::Px(5.0),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            },
-                            text: Text::with_section(
-                                text,
-                                TextStyle {
-                                    font: assets.load("FiraSans-Bold.ttf"),
-                                    font_size: 25.,
-                                    color: Color::WHITE,
-                                },
-                                Default::default(),
-                            ),
-                            ..Default::default()
-                        });
-                    });
+    .insert_bundle(PickingCameraBundle::default());
+    spawn_sidebar(&mut cmds, &assets, &mut materials, &mut meshes, &mut images);
+}
+
+fn spawn_pipeline_element(
+    effect: &EffectType,
+    center_at: Vec2,
+    cmds: &mut Commands,
+    assets: &Res<AssetServer>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    images: &mut ResMut<Assets<Image>>,
+) -> Entity {
+    let insert_texture = matches!(effect, EffectType::_Hsva | EffectType::_Rgba);
+    let (width, height) = if insert_texture {
+        (
+            f32::max(
+                PIPELINE_ELEMENT_WIDTH,
+                (NUM_PIX * PIXEL_SHOW_RESOLUTION) as f32,
+            ),
+            PIPELINE_ELEMENT_HEIGHT + (NUM_PIX * PIXEL_SHOW_RESOLUTION) as f32,
+        )
+    } else {
+        (PIPELINE_ELEMENT_WIDTH, PIPELINE_ELEMENT_HEIGHT)
+    };
+    let mut inputs = vec![];
+    let mut outputs = vec![];
+
+    let mut new_elem = cmds.spawn();
+    new_elem
+        .insert_bundle(ButtonMechanics::default())
+        .insert_bundle(MyUIBundle::new(
+            Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(1.0, 1.0))))),
+            materials.add(ColorMaterial::from(NORMAL_BUTTON)),
+            Transform::from_translation((center_at - Vec2::splat(0.5)).extend(0.0))
+                .with_scale(Vec3::new(1.0 / 16.0, 1.0 / 16.0, 1.0)),
+        ))
+        .insert_bundle(PickableBundle::default())
+        .with_children(|child_builder| {
+            child_builder.spawn_bundle(Text2dBundle {
+                text: Text::with_section(
+                    effect.name(),
+                    TextStyle {
+                        font: assets.load("FiraSans-Bold.ttf"),
+                        font_size: 25.,
+                        color: Color::WHITE,
+                    },
+                    Default::default(),
+                ),
+                transform: Transform::from_translation(Vec3::new(0., 0., 0.)),
+                text_2d_size: Text2dSize::default(),
+                ..Default::default()
+            });
+
+            //connectors
+            //TODO draw text marker onto connectors.
+            for i in 0..effect.inputs() {
+                let per_i = (width - CONNECTOR_SIZE) / effect.inputs() as f32;
+                let left = Val::Px(per_i * i as f32 + per_i / 2.0);
+                inputs.push(
+                    child_builder
+                        .spawn_bundle(MyUIBundle::new(
+                            Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::default()))),
+                            materials.add(ColorMaterial {
+                                color: INPUT_CONNECTOR,
+                                texture: None,
+                            }),
+                            Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))
+                                .with_scale(Vec3::new(1.0, 1.0, 1.0)),
+                        ))
+                        .insert(OutputConnector)
+                        .insert_bundle(ButtonMechanics::default())
+                        .insert_bundle(PickableBundle::default())
+                        .id(),
+                );
             }
-        });
-        root.spawn_bundle(ButtonBundle {
-            style: column_center_style.clone(),
-            color: UiColor(PIPELINE_BG),
-            ..Default::default()
+            for i in 0..effect.outputs() {
+                let per_i = (width - CONNECTOR_SIZE) / effect.outputs() as f32;
+                let left = Val::Px(per_i * i as f32 + per_i / 2.0);
+                outputs.push(
+                    child_builder
+                        .spawn_bundle(MyUIBundle::new(
+                            Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::default()))),
+                            materials.add(ColorMaterial {
+                                color: OUTPUT_CONNECTOR,
+                                texture: None,
+                            }),
+                            Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))
+                                .with_scale(Vec3::new(1.0, 1.0, 1.0)),
+                        ))
+                        .insert(OutputConnector)
+                        .insert_bundle(ButtonMechanics::default())
+                        .insert_bundle(PickableBundle::default())
+                        .id(),
+                );
+            }
+            if insert_texture {
+                // texture
+                child_builder
+                    .spawn()
+                    .insert_bundle(MyUIBundle::new(
+                        Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::default()))),
+                        materials.add(ColorMaterial {
+                            color: Color::NONE,
+                            texture: Some(create_dynamic_image(images)),
+                        }),
+                        Transform::default(),
+                    ))
+                    .insert(GeneratedTexture);
+            }
         })
-        .insert(PipelineBackground);
-    });
+        .insert(Inputs(inputs))
+        .insert(Outputs(outputs));
+    new_elem.id()
 }
 
 /// A system to create new elements by taking them from the sidebar.
 fn make_new_element(
     clicked_sidebar_button: Query<(&SidebarButton, &Interaction), Changed<Interaction>>,
     focused: Query<Entity, With<Focused>>,
-    root: Query<Entity, With<RootPanel>>,
     mouse_pos: Res<MousePosition>,
     mut cmds: Commands,
     assets: Res<AssetServer>,
-    mut asset_base: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     if let Ok((SidebarButton(effect), Interaction::Clicked)) = clicked_sidebar_button.get_single() {
-        let insert_texture = matches!(effect, EffectType::_Hsva | EffectType::_Rgba);
-        let (width, height) = if insert_texture {
-            (
-                f32::max(
-                    PIPELINE_ELEMENT_WIDTH,
-                    (NUM_PIX * PIXEL_SHOW_RESOLUTION) as f32,
-                ),
-                PIPELINE_ELEMENT_HEIGHT + (NUM_PIX * PIXEL_SHOW_RESOLUTION) as f32,
-            )
-        } else {
-            (PIPELINE_ELEMENT_WIDTH, PIPELINE_ELEMENT_HEIGHT)
-        };
-
+        let new_elem = spawn_pipeline_element(
+            &effect,
+            mouse_pos.position,
+            &mut cmds,
+            &assets,
+            &mut materials,
+            &mut meshes,
+            &mut images,
+        );
+        cmds.entity(new_elem)
+            .insert(PipelineElement(*effect))
+            .insert(Focused);
         for entity in focused.iter() {
             cmds.entity(entity).insert(Defocused);
         }
-        let mut inputs = vec![];
-        let mut outputs = vec![];
-        cmds.entity(root.get_single().expect("Root panel should exist."))
-            .with_children(|element| {
-                element
-                    .spawn_bundle(ButtonBundle {
-                        style: Style {
-                            position_type: PositionType::Absolute,
-                            position: Rect {
-                                left: Val::Px(mouse_pos.position.x - width / 2.0),
-                                bottom: Val::Px(mouse_pos.position.y - height / 2.0),
-                                ..Default::default()
-                            },
-                            size: Size::new(Val::Px(width), Val::Px(height)),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })
-                    .insert(Focused)
-                    .insert(PipelineElement(*effect))
-                    .with_children(|btn| {
-                        btn.spawn_bundle(TextBundle {
-                            style: Style {
-                                size: Size::new(Val::Auto, Val::Auto),
-                                ..Default::default()
-                            },
-                            text: Text::with_section(
-                                effect.name(),
-                                TextStyle {
-                                    font: assets.load("FiraSans-Bold.ttf"),
-                                    font_size: 25.,
-                                    color: Color::WHITE,
-                                },
-                                TextAlignment::default(),
-                            ),
-                            ..Default::default()
-                        });
-                        //connectors
-                        //TODO draw text marker onto connectors.
-                        for i in 0..effect.inputs() {
-                            let per_i = (width - CONNECTOR_SIZE) / effect.inputs() as f32;
-                            let left = Val::Px(per_i * i as f32 + per_i / 2.0);
-                            inputs.push(
-                                btn.spawn_bundle(ButtonBundle {
-                                    style: Style {
-                                        position_type: PositionType::Absolute,
-                                        position: Rect {
-                                            left,
-                                            bottom: Val::Px(0.0),
-                                            ..Default::default()
-                                        },
-                                        size: Size {
-                                            width: Val::Px(CONNECTOR_SIZE),
-                                            height: Val::Px(CONNECTOR_SIZE),
-                                        },
-                                        ..Default::default()
-                                    },
-                                    color: UiColor(INPUT_CONNECTOR),
-                                    ..Default::default()
-                                })
-                                .insert(InputConnector)
-                                .id(),
-                            );
-                        }
-                        for i in 0..effect.outputs() {
-                            let per_i = (width - CONNECTOR_SIZE) / effect.outputs() as f32;
-                            let left = Val::Px(per_i * i as f32 + per_i / 2.0);
-                            outputs.push(
-                                btn.spawn_bundle(ButtonBundle {
-                                    style: Style {
-                                        position_type: PositionType::Absolute,
-                                        position: Rect {
-                                            left,
-                                            bottom: Val::Px(height - CONNECTOR_SIZE),
-                                            ..Default::default()
-                                        },
-                                        size: Size {
-                                            width: Val::Px(CONNECTOR_SIZE),
-                                            height: Val::Px(CONNECTOR_SIZE),
-                                        },
-                                        ..Default::default()
-                                    },
-                                    color: UiColor(OUTPUT_CONNECTOR),
-                                    ..Default::default()
-                                })
-                                .insert(OutputConnector)
-                                .id(),
-                            );
-                        }
-                        if insert_texture {
-                            // texture
-                            btn.spawn()
-                                .insert_bundle(NodeBundle {
-                                    style: Style {
-                                        size: Size::new(
-                                            Val::Px((NUM_PIX * PIXEL_SHOW_RESOLUTION) as _),
-                                            Val::Px((NUM_PIX * PIXEL_SHOW_RESOLUTION) as _),
-                                        ),
-                                        position: Rect {
-                                            top: Val::Px(0.0),
-                                            left: Val::Px(0.0),
-                                            right: Val::Px(0.0),
-                                            ..Default::default()
-                                        },
-                                        position_type: PositionType::Absolute,
-                                        margin: Rect::all(Val::Px(2.0)),
-                                        ..Default::default()
-                                    },
-                                    image: UiImage(asset_base.add(Image::new(
-                                        Extent3d {
-                                            width: NUM_PIX as _,
-                                            height: NUM_PIX as _,
-                                            depth_or_array_layers: 1,
-                                        },
-                                        TextureDimension::D2,
-                                        vec![
-                                            0;
-                                            (NUM_PIX * NUM_PIX * 4/*channels*/ * 4/*bytes/float*/)
-                                                as _
-                                        ],
-                                        TextureFormat::Rgba32Float,
-                                    ))),
-                                    ..Default::default()
-                                })
-                                .insert(GeneratedTexture);
-                        }
-                    })
-                    .insert(Inputs(inputs))
-                    .insert(Outputs(outputs));
-            });
     }
+}
+
+fn create_dynamic_image(asset_base: &mut ResMut<Assets<Image>>) -> Handle<Image> {
+    asset_base.add(Image::new(
+        Extent3d {
+            width: NUM_PIX as _,
+            height: NUM_PIX as _,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0; (NUM_PIX * NUM_PIX * 4/*channels*/ * 4/*bytes/float*/) as _],
+        TextureFormat::Rgba32Float,
+    ))
 }
 
 fn delete_pipeline_elements(
@@ -716,7 +723,7 @@ fn gen_texture(
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 enum EffectType {
     _Constant,
     _Time,
@@ -818,14 +825,27 @@ struct MousePosition {
     position: Vec2,
     just_moved: bool,
 }
-struct TrackMouseLocation;
-impl Plugin for TrackMouseLocation {
+struct MouseInputPlugin;
+impl Plugin for MouseInputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system_to_stage(CoreStage::PreUpdate, TrackMouseLocation::track_mouse)
+        app
+            // .add_system_to_stage(CoreStage::PreUpdate, MouseInputPlugin::track_mouse.label("track_mouse"))
+            // .add_startup_system_set_to_stage(
+            //     CoreStage::PreUpdate,
+            //     SystemSet::new()
+            //         .with_system(MouseInputPlugin::apply_interactions)
+            //         .after("track_mouse"),
+            // )
+            .add_system(MouseInputPlugin::track_mouse.label("track_mouse"))
+            .add_startup_system_set(
+                SystemSet::new()
+                    .with_system(MouseInputPlugin::apply_interactions)
+                    .after("track_mouse"),
+            )
             .insert_resource(MousePosition::default());
     }
 }
-impl TrackMouseLocation {
+impl MouseInputPlugin {
     /// A system to track the mouse location and make it available as a resource.
     fn track_mouse(mut r: ResMut<MousePosition>, mut events: EventReader<CursorMoved>) {
         let mut events = events.iter();
@@ -839,5 +859,41 @@ impl TrackMouseLocation {
         for e in events {
             r.position = e.position;
         }
+    }
+    fn apply_interactions(
+        position: Res<MousePosition>,
+        mut events: EventReader<MouseButtonInput>,
+        mut q: Query<(
+            Entity,
+            &mut MyInteraction,
+            &GlobalTransform,
+            &Children,
+            &Parent,
+        )>,
+        mut pressed: Local<Option<Entity>>,
+    ) {
+        // for input in events.iter() {
+        //     #[allow(unreachable_patterns)] // catch-all arm is a false-positive
+        //     match input {
+        //         MouseButtonInput {
+        //             button: MouseButton::Left,
+        //             state,
+        //         } => match state {
+        //             ElementState::Pressed => {
+        //                 let target: Entity = { todo!("find target entity") };
+        //                 *pressed = Some({
+        //                     *q.get(target).unwrap().1 = MyInteraction::Clicked;
+        //                     target
+        //                 });
+        //             }
+        //             ElementState::Released => {
+        //                 if let Some(e) = pressed.take() {
+        //                     *q.get_mut(e).unwrap().1 = MyInteraction::None;
+        //                 }
+        //             }
+        //         },
+        //         _ => {}
+        //     }
+        // }
     }
 }
