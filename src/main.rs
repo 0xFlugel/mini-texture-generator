@@ -14,41 +14,133 @@
 //! recursively resolving its the values for all pixel positions per input connector.
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
-use bevy::render::camera::ScalingMode;
-use bevy::{
-    core::FixedTimestep,
-    input::mouse::MouseButtonInput,
-    input::ElementState,
-    prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-    sprite::{Mesh2dHandle, SpecializedMaterial2d},
-    text::Text2dSize,
-};
-use bevy_mod_picking::*;
-use std::ops::Range;
+use bevy::prelude::*;
 
-/// The resolution per axis of the texture.
-const NUM_PIX: usize = 16;
-/// GUI size per texture pixel.
-const PIXEL_SHOW_RESOLUTION: usize = 8;
-
-const NORMAL_BUTTON: Color = Color::rgb(0.15, 0.15, 0.15);
-const FOCUSED_BUTTON: Color = Color::rgb(0.35, 0.35, 0.35);
-const INPUT_CONNECTOR: Color = Color::rgb(0.75, 0.75, 0.9);
-const OUTPUT_CONNECTOR: Color = Color::rgb(0.9, 0.75, 0.75);
-const SIDEBAR: Color = Color::rgb(0.85, 0.85, 0.85);
-const PIPELINE_BG: Color = Color::NONE;
-
-const PIPELINE_ELEMENT_WIDTH: f32 = 0.125;
-const PIPELINE_ELEMENT_HEIGHT: f32 = 0.35;
-const CONNECTOR_SIZE: f32 = 0.0125;
+const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins)
-        .add_startup_system(setup)
-        ;
+    app.add_plugins(DefaultPlugins).add_startup_system(setup);
     app.run();
 }
 
-fn setup() {}
+fn setup(
+    mut cmds: Commands,
+    _asset_server: Res<AssetServer>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    _images: ResMut<Assets<Image>>,
+) {
+    cmds.spawn_bundle(OrthographicCameraBundle::new_2d());
+
+    // Create sidebar
+    {
+        cmds.spawn_bundle(ColorMesh2dBundle {
+            transform: transform_from_rect(Rect {
+                left: -1.0,
+                right: -1.0 + 1.0 / 8.0,
+                top: 1.0,
+                bottom: -1.0,
+            }),
+            mesh: meshes
+                .add(Mesh::from(shape::Quad::new(Vec2::splat(2.0))))
+                .into(),
+            material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
+            ..Default::default()
+        });
+    }
+}
+
+/// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
+fn transform_from_rect(rect: Rect<f32>) -> Transform {
+    let x = (rect.left + rect.right) / 2.0;
+    let y = (rect.top + rect.bottom) / 2.0;
+    let scale_x = (rect.right - rect.left) / 2.0;
+    let scale_y = (rect.top - rect.bottom) / 2.0;
+    Transform::from_translation(Vec3::new(x, y, 0.0)).with_scale(Vec3::new(scale_x, scale_y, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transform_from_rect_nop() {
+        let rect = Rect {
+            top: 1.0,
+            bottom: -1.0,
+            left: -1.0,
+            right: 1.0,
+        };
+        let result = dbg!(transform_from_rect(rect));
+        let expect = dbg!(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))
+            .with_scale(Vec3::new(1.0, 1.0, 1.0)));
+        let eps = 1e-6;
+        assert!((result.translation.x - expect.translation.x).abs() < eps);
+        assert!((result.translation.y - expect.translation.y).abs() < eps);
+        assert!((result.translation.z - expect.translation.z).abs() < eps);
+        assert!((result.scale.x - expect.scale.x).abs() < eps);
+        assert!((result.scale.y - expect.scale.y).abs() < eps);
+        assert!((result.scale.z - expect.scale.z).abs() < eps);
+    }
+
+    #[test]
+    fn transform_from_rect_bottom_right_quadrant() {
+        let rect = Rect {
+            top: 0.0,
+            bottom: -1.0,
+            left: 0.0,
+            right: 1.0,
+        };
+        let result = dbg!(transform_from_rect(rect));
+        let expect = dbg!(Transform::from_translation(Vec3::new(0.5, -0.5, 0.0))
+            .with_scale(Vec3::new(0.5, 0.5, 1.0)));
+        let eps = 1e-6;
+        assert!((result.translation.x - expect.translation.x).abs() < eps);
+        assert!((result.translation.y - expect.translation.y).abs() < eps);
+        assert!((result.translation.z - expect.translation.z).abs() < eps);
+        assert!((result.scale.x - expect.scale.x).abs() < eps);
+        assert!((result.scale.y - expect.scale.y).abs() < eps);
+        assert!((result.scale.z - expect.scale.z).abs() < eps);
+    }
+
+    #[test]
+    fn transform_from_rect_bottom_half() {
+        let rect = Rect {
+            top: 0.0,
+            bottom: -1.0,
+            left: -1.0,
+            right: 1.0,
+        };
+        let result = dbg!(transform_from_rect(rect));
+        let expect = dbg!(Transform::from_translation(Vec3::new(0.0, -0.5, 0.0))
+            .with_scale(Vec3::new(1.0, 0.5, 1.0)));
+        let eps = 1e-6;
+        assert!((result.translation.x - expect.translation.x).abs() < eps);
+        assert!((result.translation.y - expect.translation.y).abs() < eps);
+        assert!((result.translation.z - expect.translation.z).abs() < eps);
+        assert!((result.scale.x - expect.scale.x).abs() < eps);
+        assert!((result.scale.y - expect.scale.y).abs() < eps);
+        assert!((result.scale.z - expect.scale.z).abs() < eps);
+    }
+
+    #[test]
+    fn transform_from_rect_bigger() {
+        let rect = Rect {
+            top: 3.0,
+            bottom: -2.0,
+            left: -3.0,
+            right: 2.0,
+        };
+        let result = dbg!(transform_from_rect(rect));
+        let expect = dbg!(Transform::from_translation(Vec3::new(-0.5, 0.5, 0.0))
+            .with_scale(Vec3::new(2.5, 2.5, 1.0)));
+        let eps = 1e-6;
+        assert!((result.translation.x - expect.translation.x).abs() < eps);
+        assert!((result.translation.y - expect.translation.y).abs() < eps);
+        assert!((result.translation.z - expect.translation.z).abs() < eps);
+        assert!((result.scale.x - expect.scale.x).abs() < eps);
+        assert!((result.scale.y - expect.scale.y).abs() < eps);
+        assert!((result.scale.z - expect.scale.z).abs() < eps);
+    }
+}
