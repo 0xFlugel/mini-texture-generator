@@ -39,9 +39,9 @@ const OUTPUT_CONNECTOR: Color = Color::rgb(0.9, 0.75, 0.75);
 const SIDEBAR: Color = Color::rgb(0.85, 0.85, 0.85);
 const PIPELINE_BG: Color = Color::NONE;
 
-const PIPELINE_ELEMENT_WIDTH: f32 = 150.0;
-const PIPELINE_ELEMENT_HEIGHT: f32 = 50.0;
-const CONNECTOR_SIZE: f32 = 15.0;
+const PIPELINE_ELEMENT_WIDTH: f32 = 0.125;
+const PIPELINE_ELEMENT_HEIGHT: f32 = 0.35;
+const CONNECTOR_SIZE: f32 = 0.0125;
 
 #[derive(Bundle)]
 struct MyUIBundle<M: SpecializedMaterial2d> {
@@ -145,24 +145,20 @@ fn main() {
         .add_startup_system(setup)
         .add_plugins(DefaultPickingPlugins)
         .add_plugin(MouseInputPlugin)
-        .add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(1.0 / 60.0))
-                .with_system(gen_texture),
-        )
-        .add_system(make_new_element)
-        .add_system(delete_pipeline_elements)
-        .add_system(visual_button_focus)
-        .add_system(focus_elements)
-        .add_system_to_stage(CoreStage::PostUpdate, start_stop_dragging)
-        .add_system(drag)
-        .insert_resource(MouseStartingPosition::default())
-        .add_system(start_connecting)
-        .add_system(highlight_snapping_connector)
-        .add_system(visualize_highlighted_connector)
-        .add_system(stop_connecting)
-        .add_system(visualize_connections);
-    dbg!();
+        .add_system_set(SystemSet::new().with_run_criteria(FixedTimestep::step(1.0 / 60.0)).with_system(gen_texture))
+        // .add_system(make_new_element)
+        // .add_system(delete_pipeline_elements)
+        // .add_system(visual_button_focus)
+        // .add_system(focus_elements)
+        // .add_system_to_stage(CoreStage::PostUpdate, start_stop_dragging)
+        // .add_system(drag)
+        // .insert_resource(MouseStartingPosition::default())
+        // .add_system(start_connecting)
+        // .add_system(highlight_snapping_connector)
+        // .add_system(visualize_highlighted_connector)
+        // .add_system(stop_connecting)
+        // .add_system(visualize_connections)
+        ;
     app.run();
 }
 
@@ -351,35 +347,36 @@ fn setup(
 ) {
     fn spawn_sidebar(
         cmds: &mut Commands,
-        assets: &Res<AssetServer>,
+        asset_server: &Res<AssetServer>,
         materials: &mut ResMut<Assets<ColorMaterial>>,
         mut meshes: &mut ResMut<Assets<Mesh>>,
         mut images: &mut ResMut<Assets<Image>>,
     ) {
-        let sidebar = cmds
-            .spawn_bundle(MyUIBundle::new(
-                Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(1.0, 1.0))))),
-                materials.add(ColorMaterial::from(SIDEBAR)),
-                // Left screen side with 1/8 width and full height.
-                Transform {
-                    translation: Vec3::new(-15. / 16., 0.0, 0.0),
-                    rotation: Quat::from_rotation_z(0.0),
-                    scale: Vec3::new(0.25, 2.0, 1.0),
-                },
-            ))
-            .id();
-        for effect in EffectType::all() {
+        // let sidebar = cmds
+        //     .spawn_bundle(MyUIBundle::new(
+        //         Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(1.0, 1.0))))),
+        //         materials.add(ColorMaterial::from(SIDEBAR)),
+        //         // Left screen side with 1/8 width and full height.
+        //         Transform {
+        //             translation: Vec3::new(-15. / 16., 0.0, 0.0),
+        //             rotation: Quat::from_rotation_z(0.0),
+        //             scale: Vec3::new(0.25, 2.0, 1.0),
+        //         },
+        //     ))
+        //     .id();
+        for (y, effect) in EffectType::all().iter().enumerate().take(1) {
+            let fraction = (y + 1) as f32 / (EffectType::all().len() + 1) as f32;
             let pipeline_element = spawn_pipeline_element(
                 effect,
-                Vec2::new(-15. / 16., 0.0),
+                Vec2::new(-15.0 / 16.0, 1.0 - 2.0 * fraction),
                 cmds,
-                assets,
+                asset_server,
                 materials,
                 meshes,
                 images,
             );
             cmds.entity(pipeline_element).insert(SidebarButton(*effect));
-            cmds.entity(sidebar).add_child(pipeline_element);
+            // cmds.entity(sidebar).add_child(pipeline_element);
         }
     }
 
@@ -419,13 +416,14 @@ fn spawn_pipeline_element(
     let mut outputs = vec![];
 
     let mut new_elem = cmds.spawn();
+    let transform = Transform::from_translation((center_at).extend(0.0))
+        .with_scale(Vec2::splat(2.0 / EffectType::all().len() as f32).extend(1.0));
     new_elem
         .insert_bundle(ButtonMechanics::default())
         .insert_bundle(MyUIBundle::new(
             Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(1.0, 1.0))))),
             materials.add(ColorMaterial::from(NORMAL_BUTTON)),
-            Transform::from_translation((center_at - Vec2::splat(0.5)).extend(0.0))
-                .with_scale(Vec3::new(1.0 / 16.0, 1.0 / 16.0, 1.0)),
+            transform,
         ))
         .insert_bundle(PickableBundle::default())
         .with_children(|child_builder| {
@@ -439,7 +437,7 @@ fn spawn_pipeline_element(
                     },
                     Default::default(),
                 ),
-                transform: Transform::from_translation(Vec3::new(0., 0., 0.)),
+                transform: transform * Transform::from_scale(Vec2::splat(1.0 / 16.0).extend(1.0)),
                 text_2d_size: Text2dSize::default(),
                 ..Default::default()
             });
@@ -671,7 +669,8 @@ fn visual_button_focus(
     }
 }
 
-//TODO render texture from pipeline.
+/// Creates a texture image by querying the pipeline and transforming base input accordingly.
+/// TODO Implement the real function.
 fn gen_texture(
     q: Query<&UiImage, With<GeneratedTexture>>,
     t: Res<Time>,
@@ -723,7 +722,7 @@ fn gen_texture(
     }
 }
 
-#[derive(Copy, Clone, Hash)]
+#[derive(Debug, Copy, Clone, Hash)]
 enum EffectType {
     _Constant,
     _Time,
@@ -837,7 +836,7 @@ impl Plugin for MouseInputPlugin {
             //         .after("track_mouse"),
             // )
             .add_system(MouseInputPlugin::track_mouse.label("track_mouse"))
-            .add_startup_system_set(
+            .add_system_set(
                 SystemSet::new()
                     .with_system(MouseInputPlugin::apply_interactions)
                     .after("track_mouse"),
@@ -860,6 +859,7 @@ impl MouseInputPlugin {
             r.position = e.position;
         }
     }
+    /// A system to change states of [MyInteraction] components based on mouse input.
     fn apply_interactions(
         position: Res<MousePosition>,
         mut events: EventReader<MouseButtonInput>,
