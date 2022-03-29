@@ -42,24 +42,22 @@ fn setup(
     });
 
     // Create sidebar
-    {
-        cmds.spawn_bundle(ColorMesh2dBundle {
-            transform: transform_from_rect(
-                Rect {
-                    left: -1.0,
-                    right: -1.0 + 1.0 / 8.0,
-                    top: 1.0,
-                    bottom: -1.0,
-                },
-                0,
-            ),
-            mesh: meshes
-                .add(Mesh::from(shape::Quad::new(Vec2::splat(2.0))))
-                .into(),
-            material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
-            ..Default::default()
-        });
-    }
+    let normalized_square =
+        Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
+    cmds.spawn_bundle(ColorMesh2dBundle {
+        transform: transform_from_rect(
+            Rect {
+                left: -1.0,
+                right: -1.0 + SIDEBAR_WIDTH,
+                top: 1.0,
+                bottom: -1.0,
+            },
+            0,
+        ),
+        mesh: normalized_square.clone(),
+        material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
+        ..Default::default()
+    });
 }
 
 /// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
