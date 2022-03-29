@@ -14,10 +14,10 @@
 //! recursively resolving its the values for all pixel positions per input connector.
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
-use std::ops::Deref;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::sprite::Mesh2dHandle;
+use std::ops::Deref;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
@@ -103,6 +103,18 @@ fn setup(
         })
         .id();
     let n = EffectType::all().len();
+
+    let colors = [
+        Color::AQUAMARINE,
+        Color::BLUE,
+        Color::DARK_GRAY,
+        Color::GREEN,
+        Color::PURPLE,
+        Color::TOMATO,
+        Color::VIOLET,
+        Color::YELLOW_GREEN,
+    ];
+
     for (i, effect) in EffectType::all().iter().enumerate() {
         let num = (3 * n + 1) as f32;
         let offset = (3 * i + 1) as f32;
@@ -118,9 +130,10 @@ fn setup(
                     1,
                 ),
                 mesh: normalized_square.clone(),
-                material: materials.add(ColorMaterial::from(Color::LIME_GREEN)),
+                material: materials.add(ColorMaterial::from(colors[i])),
                 ..Default::default()
-            }).insert(SidebarElement(*effect))
+            })
+            .insert(SidebarElement(*effect))
             .id();
         cmds.entity(sidebar).add_child(child);
     }
