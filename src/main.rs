@@ -36,12 +36,15 @@ fn setup(
     // Create sidebar
     {
         cmds.spawn_bundle(ColorMesh2dBundle {
-            transform: transform_from_rect(Rect {
-                left: -1.0,
-                right: -1.0 + 1.0 / 8.0,
-                top: 1.0,
-                bottom: -1.0,
-            }),
+            transform: transform_from_rect(
+                Rect {
+                    left: -1.0,
+                    right: -1.0 + 1.0 / 8.0,
+                    top: 1.0,
+                    bottom: -1.0,
+                },
+                0,
+            ),
             mesh: meshes
                 .add(Mesh::from(shape::Quad::new(Vec2::splat(2.0))))
                 .into(),
@@ -52,12 +55,18 @@ fn setup(
 }
 
 /// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
-fn transform_from_rect(rect: Rect<f32>) -> Transform {
+///
+/// # Parameter
+///
+/// `layer` is the layer the object is residing on in the 2D scene. Make sure to put the children in
+/// front of the parents...
+fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
     let x = (rect.left + rect.right) / 2.0;
     let y = (rect.top + rect.bottom) / 2.0;
     let scale_x = (rect.right - rect.left) / 2.0;
     let scale_y = (rect.top - rect.bottom) / 2.0;
-    Transform::from_translation(Vec3::new(x, y, 0.0)).with_scale(Vec3::new(scale_x, scale_y, 1.0))
+    Transform::from_translation(Vec3::new(x, y, layer as _))
+        .with_scale(Vec3::new(scale_x, scale_y, 1.0))
 }
 
 #[cfg(test)]
@@ -72,7 +81,7 @@ mod tests {
             left: -1.0,
             right: 1.0,
         };
-        let result = dbg!(transform_from_rect(rect));
+        let result = dbg!(transform_from_rect(rect, 0));
         let expect = dbg!(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))
             .with_scale(Vec3::new(1.0, 1.0, 1.0)));
         let eps = 1e-6;
@@ -92,7 +101,7 @@ mod tests {
             left: 0.0,
             right: 1.0,
         };
-        let result = dbg!(transform_from_rect(rect));
+        let result = dbg!(transform_from_rect(rect, 0));
         let expect = dbg!(Transform::from_translation(Vec3::new(0.5, -0.5, 0.0))
             .with_scale(Vec3::new(0.5, 0.5, 1.0)));
         let eps = 1e-6;
@@ -112,7 +121,7 @@ mod tests {
             left: -1.0,
             right: 1.0,
         };
-        let result = dbg!(transform_from_rect(rect));
+        let result = dbg!(transform_from_rect(rect, 0));
         let expect = dbg!(Transform::from_translation(Vec3::new(0.0, -0.5, 0.0))
             .with_scale(Vec3::new(1.0, 0.5, 1.0)));
         let eps = 1e-6;
@@ -132,11 +141,30 @@ mod tests {
             left: -3.0,
             right: 2.0,
         };
-        let result = dbg!(transform_from_rect(rect));
+        let result = dbg!(transform_from_rect(rect, 0));
         let expect = dbg!(Transform::from_translation(Vec3::new(-0.5, 0.5, 0.0))
             .with_scale(Vec3::new(2.5, 2.5, 1.0)));
         let eps = 1e-6;
         assert!((result.translation.x - expect.translation.x).abs() < eps);
+        assert!((result.translation.y - expect.translation.y).abs() < eps);
+        assert!((result.translation.z - expect.translation.z).abs() < eps);
+        assert!((result.scale.x - expect.scale.x).abs() < eps);
+        assert!((result.scale.y - expect.scale.y).abs() < eps);
+        assert!((result.scale.z - expect.scale.z).abs() < eps);
+    }
+
+    #[test]
+    fn transform_from_rect_layers() {
+        let rect = Rect {
+            top: 1.0,
+            bottom: -1.0,
+            left: -1.0,
+            right: 1.0,
+        };
+        let result = transform_from_rect(rect, 1);
+        let expect = Transform::from_translation(Vec3::new(0.0, 0.0, 1.0));
+        let eps = 1e-6;
+        assert!((dbg!(result).translation.x - dbg!(expect).translation.x).abs() < eps);
         assert!((result.translation.y - expect.translation.y).abs() < eps);
         assert!((result.translation.z - expect.translation.z).abs() < eps);
         assert!((result.scale.x - expect.scale.x).abs() < eps);
