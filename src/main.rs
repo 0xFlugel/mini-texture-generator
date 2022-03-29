@@ -14,11 +14,53 @@
 //! recursively resolving its the values for all pixel positions per input connector.
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
+use std::ops::Deref;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::sprite::Mesh2dHandle;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
+/// The width of the sidebar in normalized coords (-1..1).
+const SIDEBAR_WIDTH: f32 = 0.25;
+
+#[derive(Debug, Copy, Clone)]
+enum EffectType {
+    Rgba,
+    Hsva,
+    Grey,
+    Constant,
+    Identity,
+    Rotate,
+    Offset,
+    Scale,
+}
+
+impl EffectType {
+    fn all() -> &'static [Self] {
+        &[
+            Self::Rgba,
+            Self::Hsva,
+            Self::Grey,
+            Self::Constant,
+            Self::Identity,
+            Self::Rotate,
+            Self::Offset,
+            Self::Scale,
+        ]
+    }
+}
+
+/// A marker for being a template in the sidebar, instead of an interactive pipeline element.
+#[derive(Debug, Component)]
+struct SidebarElement(EffectType);
+
+impl Deref for SidebarElement {
+    type Target = EffectType;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 fn main() {
     let mut app = App::new();
@@ -44,20 +86,44 @@ fn setup(
     // Create sidebar
     let normalized_square =
         Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
-    cmds.spawn_bundle(ColorMesh2dBundle {
-        transform: transform_from_rect(
-            Rect {
-                left: -1.0,
-                right: -1.0 + SIDEBAR_WIDTH,
-                top: 1.0,
-                bottom: -1.0,
-            },
-            0,
-        ),
-        mesh: normalized_square.clone(),
-        material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
-        ..Default::default()
-    });
+    let sidebar = cmds
+        .spawn_bundle(ColorMesh2dBundle {
+            transform: transform_from_rect(
+                Rect {
+                    left: -1.0,
+                    right: -1.0 + SIDEBAR_WIDTH,
+                    top: 1.0,
+                    bottom: -1.0,
+                },
+                0,
+            ),
+            mesh: normalized_square.clone(),
+            material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
+            ..Default::default()
+        })
+        .id();
+    let n = EffectType::all().len();
+    for (i, effect) in EffectType::all().iter().enumerate() {
+        let num = (3 * n + 1) as f32;
+        let offset = (3 * i + 1) as f32;
+        let child = cmds
+            .spawn_bundle(ColorMesh2dBundle {
+                transform: transform_from_rect(
+                    Rect {
+                        top: 1.0 - 2.0 * (offset / num),
+                        bottom: 1.0 - 2.0 * ((offset + 2.0) / num),
+                        left: -0.8,
+                        right: 0.8,
+                    },
+                    1,
+                ),
+                mesh: normalized_square.clone(),
+                material: materials.add(ColorMaterial::from(Color::LIME_GREEN)),
+                ..Default::default()
+            }).insert(SidebarElement(*effect))
+            .id();
+        cmds.entity(sidebar).add_child(child);
+    }
 }
 
 /// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
