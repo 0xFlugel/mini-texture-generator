@@ -14,14 +14,117 @@
 //! recursively resolving its the values for all pixel positions per input connector.
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
+use bevy::input::mouse::MouseButtonInput;
+use bevy::input::ElementState;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::sprite::Mesh2dHandle;
+use bevy_mod_raycast::{
+    DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
+    RaycastSystem,
+};
 use std::ops::Deref;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
 const SIDEBAR_WIDTH: f32 = 0.25;
+
+fn main() {
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins)
+        .add_plugin(MouseInputPlugin)
+        .add_startup_system(setup);
+    app.run();
+}
+
+fn setup(
+    mut cmds: Commands,
+    _asset_server: Res<AssetServer>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    _images: ResMut<Assets<Image>>,
+    windows: Res<Windows>,
+) {
+    let window = windows.get_primary().unwrap();
+    let x_scale = window.width() / 2.0;
+    let y_scale = window.height() / 2.0;
+
+    cmds.spawn_bundle(OrthographicCameraBundle::new_2d())
+        .insert(RayCastSource::<MyRaycastSet>::new());
+
+    // Create sidebar
+    let normalized_square =
+        Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
+    let sidebar = cmds
+        .spawn_bundle(ColorMesh2dBundle {
+            transform: transform_from_rect(
+                Rect {
+                    left: -x_scale,
+                    right: (-1.0 + SIDEBAR_WIDTH) * x_scale,
+                    top: y_scale,
+                    bottom: -y_scale,
+                },
+                0,
+            ),
+            mesh: normalized_square.clone(),
+            material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
+            ..Default::default()
+        })
+        .insert(RayCastMesh::<MyRaycastSet>::default())
+        .id();
+    let n = EffectType::all().len();
+
+    let colors = [
+        Color::AQUAMARINE,
+        Color::BLUE,
+        Color::DARK_GRAY,
+        Color::GREEN,
+        Color::PURPLE,
+        Color::TOMATO,
+        Color::VIOLET,
+        Color::YELLOW_GREEN,
+    ];
+
+    for (i, effect) in EffectType::all().iter().enumerate() {
+        let num = (3 * n + 1) as f32;
+        let offset = (3 * i + 1) as f32;
+        let child = cmds
+            .spawn_bundle(ColorMesh2dBundle {
+                transform: transform_from_rect(
+                    Rect {
+                        top: 1.0 - 2.0 * (offset / num),
+                        bottom: 1.0 - 2.0 * ((offset + 2.0) / num),
+                        left: -0.8,
+                        right: 0.8,
+                    },
+                    1,
+                ),
+                mesh: normalized_square.clone(),
+                material: materials.add(ColorMaterial::from(colors[i])),
+                ..Default::default()
+            })
+            .insert(SidebarElement(*effect))
+            .insert(MyInteraction::default())
+            .insert(RayCastMesh::<MyRaycastSet>::default())
+            .id();
+        cmds.entity(sidebar).add_child(child);
+    }
+}
+
+/// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
+///
+/// # Parameter
+///
+/// `layer` is the layer the object is residing on in the 2D scene. Make sure to put the children in
+/// front of the parents...
+fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
+    let x = (rect.left + rect.right) / 2.0;
+    let y = (rect.top + rect.bottom) / 2.0;
+    let scale_x = (rect.right - rect.left) / 2.0;
+    let scale_y = (rect.top - rect.bottom) / 2.0;
+    Transform::from_translation(Vec3::new(x, y, layer as _))
+        .with_scale(Vec3::new(scale_x, scale_y, 1.0))
+}
 
 #[derive(Debug, Copy, Clone)]
 enum EffectType {
@@ -62,97 +165,101 @@ impl Deref for SidebarElement {
     }
 }
 
-fn main() {
-    let mut app = App::new();
-    app.add_plugins(DefaultPlugins).add_startup_system(setup);
-    app.run();
+#[derive(Debug, Component, Copy, Clone, Eq, PartialEq)]
+enum MyInteraction {
+    None,
+    Hovered,
+    Pressed,
 }
 
-fn setup(
-    mut cmds: Commands,
-    _asset_server: Res<AssetServer>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    _images: ResMut<Assets<Image>>,
-) {
-    cmds.spawn_bundle(OrthographicCameraBundle {
-        orthographic_projection: OrthographicProjection {
-            scaling_mode: ScalingMode::None,
-            ..Default::default()
-        },
-        ..OrthographicCameraBundle::new_2d()
-    });
-
-    // Create sidebar
-    let normalized_square =
-        Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
-    let sidebar = cmds
-        .spawn_bundle(ColorMesh2dBundle {
-            transform: transform_from_rect(
-                Rect {
-                    left: -1.0,
-                    right: -1.0 + SIDEBAR_WIDTH,
-                    top: 1.0,
-                    bottom: -1.0,
-                },
-                0,
-            ),
-            mesh: normalized_square.clone(),
-            material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
-            ..Default::default()
-        })
-        .id();
-    let n = EffectType::all().len();
-
-    let colors = [
-        Color::AQUAMARINE,
-        Color::BLUE,
-        Color::DARK_GRAY,
-        Color::GREEN,
-        Color::PURPLE,
-        Color::TOMATO,
-        Color::VIOLET,
-        Color::YELLOW_GREEN,
-    ];
-
-    for (i, effect) in EffectType::all().iter().enumerate() {
-        let num = (3 * n + 1) as f32;
-        let offset = (3 * i + 1) as f32;
-        let child = cmds
-            .spawn_bundle(ColorMesh2dBundle {
-                transform: transform_from_rect(
-                    Rect {
-                        top: 1.0 - 2.0 * (offset / num),
-                        bottom: 1.0 - 2.0 * ((offset + 2.0) / num),
-                        left: -0.8,
-                        right: 0.8,
-                    },
-                    1,
-                ),
-                mesh: normalized_square.clone(),
-                material: materials.add(ColorMaterial::from(colors[i])),
-                ..Default::default()
-            })
-            .insert(SidebarElement(*effect))
-            .id();
-        cmds.entity(sidebar).add_child(child);
+impl Default for MyInteraction {
+    fn default() -> Self {
+        Self::None
     }
 }
 
-/// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
-///
-/// # Parameter
-///
-/// `layer` is the layer the object is residing on in the 2D scene. Make sure to put the children in
-/// front of the parents...
-fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
-    let x = (rect.left + rect.right) / 2.0;
-    let y = (rect.top + rect.bottom) / 2.0;
-    let scale_x = (rect.right - rect.left) / 2.0;
-    let scale_y = (rect.top - rect.bottom) / 2.0;
-    Transform::from_translation(Vec3::new(x, y, layer as _))
-        .with_scale(Vec3::new(scale_x, scale_y, 1.0))
+/// A resource to track the mouse location.
+#[derive(Debug, Default, Copy, Clone)]
+struct MousePosition {
+    position: Vec2,
+    just_moved: bool,
 }
+struct MouseInputPlugin;
+impl Plugin for MouseInputPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system_to_stage(
+            CoreStage::PreUpdate,
+            MouseInputPlugin::track_mouse
+                .label("track_mouse")
+                .before(RaycastSystem::BuildRays),
+        )
+        .add_system_set_to_stage(
+            CoreStage::PreUpdate,
+            SystemSet::new()
+                .with_system(MouseInputPlugin::apply_interactions)
+                .after("track_mouse"),
+        )
+        .insert_resource(MousePosition::default())
+        .add_plugin(DefaultRaycastingPlugin::<MyRaycastSet>::default())
+        .insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
+    }
+}
+impl MouseInputPlugin {
+    /// A system to track the mouse location and make it available as a resource.
+    fn track_mouse(
+        mut r: ResMut<MousePosition>,
+        mut events: EventReader<CursorMoved>,
+        mut rays: Query<&mut RayCastSource<MyRaycastSet>>,
+    ) {
+        match events.iter().last() {
+            None => r.just_moved = false,
+            Some(e) => {
+                r.position = e.position;
+                r.just_moved = true;
+                for mut ray in rays.iter_mut() {
+                    ray.cast_method = RayCastMethod::Screenspace(r.position);
+                }
+            }
+        }
+    }
+    /// A system to change states of [MyInteraction] components based on mouse input.
+    fn apply_interactions(
+        mut q: Query<(Entity, &mut MyInteraction)>,
+        mut events: EventReader<MouseButtonInput>,
+        mut pressed: Local<Option<Entity>>,
+        mut rays: Query<&RayCastSource<MyRaycastSet>>,
+    ) {
+        for input in events.iter() {
+            #[allow(unreachable_patterns)] // catch-all arm is a false-positive
+            match input {
+                MouseButtonInput {
+                    button: MouseButton::Left,
+                    state,
+                } => match state {
+                    ElementState::Pressed => {
+                        *pressed = dbg!(rays
+                            .iter()
+                            .next()
+                            .and_then(RayCastSource::intersect_top)
+                            .map(|(target, _)| target));
+                        if let Some(target) = *pressed {
+                            *q.get_mut(dbg!(target)).unwrap().1 = MyInteraction::Pressed;
+                        }
+                    }
+                    ElementState::Released => {
+                        if let Some(e) = pressed.take() {
+                            *q.get_mut(dbg!(e)).unwrap().1 = MyInteraction::None;
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+}
+/// A marker for ray-castable entities.
+#[derive(Component)]
+struct MyRaycastSet;
 
 #[cfg(test)]
 mod tests {
