@@ -15,6 +15,8 @@
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
 use bevy::prelude::*;
+use bevy::render::camera::ScalingMode;
+use bevy::sprite::Mesh2dHandle;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 
@@ -31,7 +33,13 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     _images: ResMut<Assets<Image>>,
 ) {
-    cmds.spawn_bundle(OrthographicCameraBundle::new_2d());
+    cmds.spawn_bundle(OrthographicCameraBundle {
+        orthographic_projection: OrthographicProjection {
+            scaling_mode: ScalingMode::None,
+            ..Default::default()
+        },
+        ..OrthographicCameraBundle::new_2d()
+    });
 
     // Create sidebar
     {
