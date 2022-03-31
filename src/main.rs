@@ -17,7 +17,7 @@
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ElementState;
 use bevy::prelude::*;
-use bevy::render::camera::ScalingMode;
+use bevy::render::camera::{DepthCalculation, ScalingMode};
 use bevy::sprite::Mesh2dHandle;
 use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
@@ -30,11 +30,24 @@ const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 const SIDEBAR_WIDTH: f32 = 0.25;
 
 fn main() {
-    let mut app = App::new();
-    app.add_plugins(DefaultPlugins)
-        .add_plugin(MouseInputPlugin)
-        .add_startup_system(setup);
-    app.run();
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugin(DefaultRaycastingPlugin::<MyRaycastSet>::default())
+        .add_system_set_to_stage(
+            CoreStage::PreUpdate,
+            SystemSet::new()
+                .with_system(track_mouse)
+                .before(RaycastSystem::BuildRays),
+        )
+        .add_system_set_to_stage(
+            CoreStage::PreUpdate,
+            SystemSet::new()
+                .with_system(apply_interactions)
+                .after(RaycastSystem::UpdateRaycast),
+        )
+        .insert_resource(MousePosition::default())
+        .add_startup_system(setup)
+        .run();
 }
 
 fn setup(
@@ -49,12 +62,20 @@ fn setup(
     let x_scale = window.width() / 2.0;
     let y_scale = window.height() / 2.0;
 
-    cmds.spawn_bundle(OrthographicCameraBundle::new_2d())
-        .insert(RayCastSource::<MyRaycastSet>::new());
+    cmds.spawn_bundle(OrthographicCameraBundle {
+        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 100.0)),
+        orthographic_projection: OrthographicProjection {
+            depth_calculation: DepthCalculation::ZDifference,
+            scaling_mode: ScalingMode::WindowSize,
+            ..Default::default()
+        },
+        ..OrthographicCameraBundle::new_3d()
+    })
+    .insert(RayCastSource::<MyRaycastSet>::new());
+    cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
     // Create sidebar
-    let normalized_square =
-        Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
+    let normalized_square = Mesh2dHandle(meshes.add(Mesh::from(shape::Icosphere::default())));
     let sidebar = cmds
         .spawn_bundle(ColorMesh2dBundle {
             transform: transform_from_rect(
@@ -108,6 +129,63 @@ fn setup(
             .insert(RayCastMesh::<MyRaycastSet>::default())
             .id();
         cmds.entity(sidebar).add_child(child);
+    }
+}
+
+/// A system to track the mouse location and make it available as a resource.
+fn track_mouse(
+    mut r: ResMut<MousePosition>,
+    mut events: EventReader<CursorMoved>,
+    mut rays: Query<&mut RayCastSource<MyRaycastSet>>,
+) {
+    match events.iter().last() {
+        None => r.just_moved = false,
+        Some(e) => {
+            r.position = e.position;
+            r.just_moved = true;
+            for mut ray in rays.iter_mut() {
+                ray.cast_method = RayCastMethod::Screenspace(r.position);
+            }
+        }
+    }
+}
+
+/// A system to change states of [MyInteraction] components based on mouse input.
+fn apply_interactions(
+    mut q: Query<(Entity, &mut MyInteraction)>,
+    mut events: EventReader<MouseButtonInput>,
+    mut pressed: Local<Option<Entity>>,
+    rays: Query<&RayCastSource<MyRaycastSet>>,
+) {
+    let hovering = rays
+        .iter()
+        .inspect(|a| println!("{:?}", a.ray()))
+        .filter_map(RayCastSource::intersect_list)
+        .inspect(|a| println!("{:?}", a))
+        .flatten()
+        .map(|(target, _)| target.clone())
+        .next();
+    for input in events.iter() {
+        #[allow(unreachable_patterns)] // catch-all arm is a false-positive
+        match input {
+            MouseButtonInput {
+                button: MouseButton::Left,
+                state,
+            } => match state {
+                ElementState::Pressed => {
+                    *pressed = dbg!(hovering);
+                    if let Some(target) = *pressed {
+                        *q.get_mut(dbg!(target)).unwrap().1 = MyInteraction::Pressed;
+                    }
+                }
+                ElementState::Released => {
+                    if let Some(e) = pressed.take() {
+                        *q.get_mut(dbg!(e)).unwrap().1 = MyInteraction::None;
+                    }
+                }
+            },
+            _ => {}
+        }
     }
 }
 
@@ -184,81 +262,8 @@ struct MousePosition {
     position: Vec2,
     just_moved: bool,
 }
-struct MouseInputPlugin;
-impl Plugin for MouseInputPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_system_to_stage(
-            CoreStage::PreUpdate,
-            MouseInputPlugin::track_mouse
-                .label("track_mouse")
-                .before(RaycastSystem::BuildRays),
-        )
-        .add_system_set_to_stage(
-            CoreStage::PreUpdate,
-            SystemSet::new()
-                .with_system(MouseInputPlugin::apply_interactions)
-                .after("track_mouse"),
-        )
-        .insert_resource(MousePosition::default())
-        .add_plugin(DefaultRaycastingPlugin::<MyRaycastSet>::default())
-        .insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
-    }
-}
-impl MouseInputPlugin {
-    /// A system to track the mouse location and make it available as a resource.
-    fn track_mouse(
-        mut r: ResMut<MousePosition>,
-        mut events: EventReader<CursorMoved>,
-        mut rays: Query<&mut RayCastSource<MyRaycastSet>>,
-    ) {
-        match events.iter().last() {
-            None => r.just_moved = false,
-            Some(e) => {
-                r.position = e.position;
-                r.just_moved = true;
-                for mut ray in rays.iter_mut() {
-                    ray.cast_method = RayCastMethod::Screenspace(r.position);
-                }
-            }
-        }
-    }
-    /// A system to change states of [MyInteraction] components based on mouse input.
-    fn apply_interactions(
-        mut q: Query<(Entity, &mut MyInteraction)>,
-        mut events: EventReader<MouseButtonInput>,
-        mut pressed: Local<Option<Entity>>,
-        mut rays: Query<&RayCastSource<MyRaycastSet>>,
-    ) {
-        for input in events.iter() {
-            #[allow(unreachable_patterns)] // catch-all arm is a false-positive
-            match input {
-                MouseButtonInput {
-                    button: MouseButton::Left,
-                    state,
-                } => match state {
-                    ElementState::Pressed => {
-                        *pressed = dbg!(rays
-                            .iter()
-                            .next()
-                            .and_then(RayCastSource::intersect_top)
-                            .map(|(target, _)| target));
-                        if let Some(target) = *pressed {
-                            *q.get_mut(dbg!(target)).unwrap().1 = MyInteraction::Pressed;
-                        }
-                    }
-                    ElementState::Released => {
-                        if let Some(e) = pressed.take() {
-                            *q.get_mut(dbg!(e)).unwrap().1 = MyInteraction::None;
-                        }
-                    }
-                },
-                _ => {}
-            }
-        }
-    }
-}
+
 /// A marker for ray-castable entities.
-#[derive(Component)]
 struct MyRaycastSet;
 
 #[cfg(test)]
