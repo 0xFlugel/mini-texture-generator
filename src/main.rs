@@ -66,7 +66,7 @@ fn setup(
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
     // Create sidebar
-    let normalized_square = Mesh2dHandle(meshes.add(Mesh::from(shape::Icosphere::default())));
+    let normalized_square = Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
     let sidebar = cmds
         .spawn_bundle(ColorMesh2dBundle {
             transform: transform_from_rect(
@@ -82,7 +82,6 @@ fn setup(
             material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
             ..Default::default()
         })
-        .insert(RayCastMesh::<MyRaycastSet>::default())
         .id();
     let n = EffectType::all().len();
 
@@ -150,9 +149,7 @@ fn apply_interactions(
 ) {
     let hovering = rays
         .iter()
-        .inspect(|a| println!("{:?}", a.ray()))
         .filter_map(RayCastSource::intersect_list)
-        .inspect(|a| println!("{:?}", a))
         .flatten()
         .map(|(target, _)| target.clone())
         .next();
@@ -164,7 +161,7 @@ fn apply_interactions(
                 state,
             } => match state {
                 ElementState::Pressed => {
-                    *pressed = dbg!(hovering);
+                    *pressed = hovering;
                     if let Some(target) = *pressed {
                         *q.get_mut(dbg!(target)).unwrap().1 = MyInteraction::Pressed;
                     }
