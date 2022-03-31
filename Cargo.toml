@@ -6,9 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.6", features = ["dynamic"] } # Remove the dynamic feature for debugging.
-#bevy = { version = "0.6" }
-bevy_mod_raycast = "0.3.9"
+bevy = { git = "https://github.com/bevyengine/bevy", branch = "main", features = ["dynamic"] } # Remove the dynamic feature for debugging.
+#bevy = { git = "https://github.com/bevyengine/bevy", branch = "main" }
+
+# There is a fork with a better way of doing my modification on github, but I leave this because of possible version
+# mismatches.
+bevy_mod_raycast = { path="bevy_mod_raycast" }
 
 # (https://bevy-cheatbook.github.io/pitfalls/performance.html):
 # Enable only a small amount of optimization in debug mode
