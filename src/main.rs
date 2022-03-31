@@ -64,7 +64,8 @@ fn setup(
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
     // Create sidebar
-    let normalized_square = Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
+    let normalized_square =
+        Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
     let sidebar = cmds
         .spawn_bundle(ColorMesh2dBundle {
             transform: transform_from_rect(
@@ -140,7 +141,7 @@ fn track_mouse(
 
 /// A system to change states of [MyInteraction] components based on mouse input.
 fn apply_interactions(
-    mut q: Query<(Entity, &mut MyInteraction)>,
+    mut interactive_elements: Query<(Entity, &mut MyInteraction)>,
     mut events: EventReader<MouseButtonInput>,
     mut pressed: Local<Option<Entity>>,
     rays: Query<&RayCastSource<MyRaycastSet>>,
@@ -160,13 +161,13 @@ fn apply_interactions(
             } => match state {
                 ElementState::Pressed => {
                     *pressed = hovering;
-                    if let Some(target) = *pressed {
-                        *q.get_mut(dbg!(target)).unwrap().1 = MyInteraction::Pressed;
+                    if let Some(pressed) = *pressed {
+                        *interactive_elements.get_mut(pressed).unwrap().1 = MyInteraction::Pressed;
                     }
                 }
                 ElementState::Released => {
-                    if let Some(e) = pressed.take() {
-                        *q.get_mut(dbg!(e)).unwrap().1 = MyInteraction::None;
+                    if let Some(pressed) = pressed.take() {
+                        *interactive_elements.get_mut(pressed).unwrap().1 = MyInteraction::None;
                     }
                 }
             },
