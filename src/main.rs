@@ -51,10 +51,8 @@ fn main() {
 
 fn setup(
     mut cmds: Commands,
-    _asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    _images: ResMut<Assets<Image>>,
     windows: Res<Windows>,
 ) {
     let window = windows.get_primary().unwrap();
