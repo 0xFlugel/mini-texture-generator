@@ -17,7 +17,6 @@
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ElementState;
 use bevy::prelude::*;
-use bevy::render::camera::{DepthCalculation, ScalingMode};
 use bevy::sprite::Mesh2dHandle;
 use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
@@ -62,16 +61,8 @@ fn setup(
     let x_scale = window.width() / 2.0;
     let y_scale = window.height() / 2.0;
 
-    cmds.spawn_bundle(OrthographicCameraBundle {
-        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 100.0)),
-        orthographic_projection: OrthographicProjection {
-            depth_calculation: DepthCalculation::ZDifference,
-            scaling_mode: ScalingMode::WindowSize,
-            ..Default::default()
-        },
-        ..OrthographicCameraBundle::new_3d()
-    })
-    .insert(RayCastSource::<MyRaycastSet>::new());
+    cmds.spawn_bundle(OrthographicCameraBundle::new_2d())
+        .insert(RayCastSource::<MyRaycastSet>::new());
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
     // Create sidebar
