@@ -198,9 +198,8 @@ fn track_mouse(
 
 /// A system to change states of [MyInteraction] components based on mouse input.
 fn apply_interactions(
-    mut interactive_elements: Query<(Entity, &mut MyInteraction)>,
+    mut interactive: Query<(Entity, &mut MyInteraction)>,
     mut events: EventReader<MouseButtonInput>,
-    mut pressed: Local<Option<Entity>>,
     rays: Query<&RayCastSource<MyRaycastSet>>,
 ) {
     let hovering = rays
@@ -217,14 +216,16 @@ fn apply_interactions(
                 state,
             } => match state {
                 ElementState::Pressed => {
-                    *pressed = hovering;
-                    if let Some(pressed) = *pressed {
-                        *interactive_elements.get_mut(pressed).unwrap().1 = MyInteraction::Pressed;
+                    if let Some((_, mut interaction)) =
+                        hovering.and_then(|pressed| interactive.get_mut(pressed).ok())
+                    {
+                        *interaction = MyInteraction::Pressed;
                     }
                 }
                 ElementState::Released => {
-                    if let Some(pressed) = pressed.take() {
-                        *interactive_elements.get_mut(pressed).unwrap().1 = MyInteraction::None;
+                    // Defensively release *all* clicked elements, not just the single one from here.
+                    for (_, mut interaction) in interactive.iter_mut() {
+                        *interaction = MyInteraction::None;
                     }
                 }
             },
