@@ -233,7 +233,6 @@ impl Deref for SidebarElement {
 #[derive(Debug, Component, Copy, Clone, Eq, PartialEq)]
 enum MyInteraction {
     None,
-    Hovered,
     Pressed,
 }
 
