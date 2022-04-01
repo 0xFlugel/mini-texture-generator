@@ -46,8 +46,64 @@ fn main() {
         )
         .insert_resource(MousePosition::default())
         .add_startup_system(setup)
+        .add_system(create_element)
         .run();
 }
+
+/// A system to create new pipeline elements by copying the clicked sidebar element and initializing
+/// a dragging state.
+fn create_element(
+    mut cmds: Commands,
+    changed_interactions: Query<(Entity, &MyInteraction), Changed<MyInteraction>>,
+    template_data: Query<(
+        &SidebarElement,
+        &GlobalTransform,
+        &Mesh2dHandle,
+        &Handle<ColorMaterial>,
+    )>,
+    mouse_position: Res<MousePosition>,
+    windows: Res<Windows>,
+) {
+    /// Copy the relevent components directly from the existing template and create a pipeline
+    /// element *that is currently being dragged*. The user does not have to click again.
+    fn dragging_element_from_template(
+        cmds: &mut Commands,
+        data: (
+            &SidebarElement,
+            &GlobalTransform,
+            &Mesh2dHandle,
+            &Handle<ColorMaterial>,
+        ),
+        position: Vec3,
+    ) {
+        let (SidebarElement(effect), global_transform, mesh, material) = data;
+        let transform = Transform::from(*global_transform).with_translation(position);
+        cmds.spawn_bundle(ColorMesh2dBundle {
+            transform,
+            mesh: mesh.clone(),
+            material: (*material).clone(),
+            ..Default::default()
+        })
+        .insert(effect.clone())
+        .insert(MyInteraction::Pressed)
+        .insert(RayCastMesh::<MyRaycastSet>::default());
+    }
+
+    let newly_clicked = changed_interactions
+        .iter()
+        // Look only at the event where the left mouse button was newly pressed down.
+        .filter(|(_, i)| i.deref() == &MyInteraction::Pressed)
+        // Exclude all non-sidebar elements to copy only the templates.
+        .filter_map(|(e, _)| template_data.get(e).ok());
+    let window = windows.get_primary().expect("Primary window must exist.");
+    let offset = Vec2::new(window.width() / 2.0, window.height() / 2.0);
+    for original_data in newly_clicked {
+        let position = (mouse_position.position - offset).extend(original_data.1.translation.z);
+        dragging_element_from_template(&mut cmds, original_data, position);
+    }
+}
+
+//TODO remove entities that are partially colliding with the sidebar and are not sidebar elements.
 
 fn setup(
     mut cmds: Commands,
@@ -81,6 +137,7 @@ fn setup(
             material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
             ..Default::default()
         })
+        .insert(Sidebar)
         .id();
     let n = EffectType::all().len();
 
@@ -191,7 +248,7 @@ fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
         .with_scale(Vec3::new(scale_x, scale_y, 1.0))
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Component)]
 enum EffectType {
     Rgba,
     Hsva,
@@ -221,6 +278,10 @@ impl EffectType {
 /// A marker for being a template in the sidebar, instead of an interactive pipeline element.
 #[derive(Debug, Component)]
 struct SidebarElement(EffectType);
+
+/// A marker for being the sidebar, the parent of the sidebar elements.
+#[derive(Debug, Component)]
+struct Sidebar;
 
 impl Deref for SidebarElement {
     type Target = EffectType;
