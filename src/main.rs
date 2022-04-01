@@ -47,6 +47,7 @@ fn main() {
         .insert_resource(MousePosition::default())
         .add_startup_system(setup)
         .add_system(create_element)
+        .add_system(dragging)
         .run();
 }
 
@@ -75,6 +76,7 @@ fn create_element(
             &Handle<ColorMaterial>,
         ),
         position: Vec3,
+        mouse_position: MousePosition,
     ) {
         let (SidebarElement(effect), global_transform, mesh, material) = data;
         let transform = Transform::from(*global_transform).with_translation(position);
@@ -86,6 +88,10 @@ fn create_element(
         })
         .insert(effect.clone())
         .insert(MyInteraction::Pressed)
+        .insert(Dragging {
+            start: mouse_position,
+            base: transform,
+        })
         .insert(RayCastMesh::<MyRaycastSet>::default());
     }
 
@@ -99,11 +105,42 @@ fn create_element(
     let offset = Vec2::new(window.width() / 2.0, window.height() / 2.0);
     for original_data in newly_clicked {
         let position = (mouse_position.position - offset).extend(original_data.1.translation.z);
-        dragging_element_from_template(&mut cmds, original_data, position);
+        dragging_element_from_template(&mut cmds, original_data, position, *mouse_position);
     }
 }
 
-//TODO remove entities that are partially colliding with the sidebar and are not sidebar elements.
+/// Drag entities around their XY plane depending on cursor movement.
+fn dragging(
+    start: Query<
+        (Entity, &MyInteraction, &Transform),
+        (Without<Dragging>, Without<Sidebar>, Without<SidebarElement>),
+    >,
+    mut continue_: Query<(&Dragging, &mut Transform)>,
+    stop: Query<(Entity, &MyInteraction), With<Dragging>>,
+    mut cmds: Commands,
+    current_mouse_position: Res<MousePosition>,
+) {
+    start
+        .iter()
+        .filter(|(_, i, _)| **i == MyInteraction::Pressed)
+        .for_each(|(e, _, base)| {
+            cmds.entity(e).insert(Dragging {
+                start: current_mouse_position.clone(),
+                base: *base,
+            });
+        });
+    stop.iter()
+        .filter(|(_, i)| **i != MyInteraction::Pressed)
+        .for_each(|(e, _)| {
+            cmds.entity(e).remove::<Dragging>();
+        });
+    for (Dragging { start, base }, mut transform) in continue_.iter_mut() {
+        let translate = Transform::from_translation(
+            (current_mouse_position.position - start.position).extend(0.0),
+        );
+        *transform = translate * *base;
+    }
+}
 
 fn setup(
     mut cmds: Commands,
@@ -247,6 +284,12 @@ fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
     let scale_y = (rect.top - rect.bottom) / 2.0;
     Transform::from_translation(Vec3::new(x, y, layer as _))
         .with_scale(Vec3::new(scale_x, scale_y, 1.0))
+}
+
+#[derive(Debug, Component)]
+struct Dragging {
+    start: MousePosition,
+    base: Transform,
 }
 
 #[derive(Debug, Copy, Clone, Component)]
