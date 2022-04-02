@@ -31,11 +31,17 @@ const SIDEBAR_WIDTH: f32 = 0.25;
 /// The relative path after "/assets" in the project folder -- which containts the Cargo.toml.
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
 const FONT_FILENAME: &'static str = "Roboto-Regular.ttf";
+/// Text size, high enough to have a acceptable render quality.
 const FONT_SIZE: f32 = 50.0;
+/// This is set to fit all text into the pipeline elements & scales automatically with [FONT_SIZE].
 const TEXT_SCALING: [f32; 2] = [
     1.0 / (2.0 * FONT_SIZE),
     1.0 / (2.0 * (2.0 / 3.0) * FONT_SIZE),
 ];
+/// Scale factors of input and output connectors.
+///
+/// The values are normalized to a unit square parent.
+const IO_PAD_SCALING: [f32; 2] = [0.1, 0.2];
 
 fn main() {
     App::new()
@@ -74,7 +80,7 @@ fn create_element(
     )>,
     mouse_position: Res<MousePosition>,
     windows: Res<Windows>,
-    materials: Res<Assets<ColorMaterial>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
 ) {
@@ -91,7 +97,7 @@ fn create_element(
         ),
         position: Vec3,
         mouse_position: MousePosition,
-        materials: &Assets<ColorMaterial>,
+        materials: &mut Assets<ColorMaterial>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
     ) {
@@ -123,13 +129,14 @@ fn create_element(
             &label,
             (*material).clone(),
             mesh.clone(),
-            &materials,
+            materials,
             transform,
             (*font).clone(),
         );
         cmds.entity(new)
             .insert(effect.clone())
             .insert(MyInteraction::Pressed)
+            .insert(Draggable)
             .insert(Dragging {
                 start: mouse_position,
                 base: transform,
@@ -151,7 +158,7 @@ fn create_element(
             original_data,
             position,
             *mouse_position,
-            materials.as_ref(),
+            materials.as_mut(),
             font.as_ref(),
             &texts,
         );
@@ -160,10 +167,7 @@ fn create_element(
 
 /// Drag entities around their XY plane depending on cursor movement.
 fn dragging(
-    start: Query<
-        (Entity, &MyInteraction, &Transform),
-        (Without<Dragging>, Without<Sidebar>, Without<SidebarElement>),
-    >,
+    start: Query<(Entity, &MyInteraction, &Transform), (With<Draggable>, Without<Dragging>)>,
     mut continue_: Query<(&Dragging, &mut Transform)>,
     stop: Query<(Entity, &MyInteraction), With<Dragging>>,
     mut cmds: Commands,
@@ -265,7 +269,7 @@ fn setup(
             effect.name(),
             materials.add(ColorMaterial::from(colors[i])),
             normalized_square.clone(),
-            materials.as_ref(),
+            materials.as_mut(),
             transform,
             font.clone(),
         );
@@ -285,7 +289,7 @@ fn create_pipeline_element(
     label: &str,
     material: Handle<ColorMaterial>,
     mesh: Mesh2dHandle,
-    materials: &Assets<ColorMaterial>,
+    materials: &mut Assets<ColorMaterial>,
     transform: Transform,
     font: Handle<Font>,
 ) -> Entity {
@@ -300,7 +304,7 @@ fn create_pipeline_element(
     let element = cmds
         .spawn_bundle(ColorMesh2dBundle {
             transform,
-            mesh,
+            mesh: mesh.clone(),
             material: material.clone(),
             ..Default::default()
         })
@@ -322,7 +326,64 @@ fn create_pipeline_element(
     cmds.entity(element).add_child(label);
 
     // Add inputs and outputs.
-    //TODO
+    let mut inputs = vec![];
+    let mut outputs = vec![];
+    cmds.entity(element)
+        .with_children(|cmds| {
+            fn create_io_pad<C: Component + Default>(
+                cmds: &mut ChildBuilder,
+                fraction: f32,
+                ty: f32,
+                material: Handle<ColorMaterial>,
+                mesh: Mesh2dHandle,
+            ) -> Entity {
+                let tx = -1.0 + 2.0 * fraction;
+                // Text is 0.5 layers in front. This is functional and must be in front text as well.
+                let tz = 0.75;
+                let id = cmds
+                    .spawn_bundle(ColorMesh2dBundle {
+                        transform: Transform::from_scale(Vec2::from(IO_PAD_SCALING).extend(1.0))
+                            .with_translation(Vec3::new(tx, ty, tz)),
+                        material,
+                        mesh,
+                        ..Default::default()
+                    })
+                    .insert(C::default())
+                    .insert(RayCastMesh::<MyRaycastSet>::default())
+                    .insert(MyInteraction::default())
+                    .id();
+                id
+            }
+
+            // Move the center (0,0) to the top/bottom edge (y=+-1) of the element.
+            let ty_top = -1.0 + IO_PAD_SCALING[1];
+            let ty_bottom = 1.0 - IO_PAD_SCALING[1];
+            let material = materials.add(ColorMaterial::from(text_color));
+            for i in 1..=effect.inputs() {
+                let fraction = i as f32 / (effect.inputs() + 1) as f32;
+                let id = create_io_pad::<InputConnector>(
+                    cmds,
+                    fraction,
+                    ty_top,
+                    material.clone(),
+                    mesh.clone(),
+                );
+                inputs.push(id);
+            }
+            for i in 1..=effect.outputs() {
+                let fraction = i as f32 / (effect.outputs() + 1) as f32;
+                let id = create_io_pad::<OutputConnector>(
+                    cmds,
+                    fraction,
+                    ty_bottom,
+                    material.clone(),
+                    mesh.clone(),
+                );
+                outputs.push(id);
+            }
+        })
+        .insert(InputConnectors(inputs))
+        .insert(OutputConnectors(outputs));
 
     element
 }
@@ -434,9 +495,19 @@ fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
         .with_scale(Vec3::new(scale_x, scale_y, 1.0))
 }
 
+/// A marker for entities that can be dragged.
+#[derive(Component)]
+struct Draggable;
+/// State while dragging an entity.
 #[derive(Debug, Component)]
 struct Dragging {
     start: MousePosition,
+    /// The entity transform at the start of the drag action.
+    ///
+    /// # Note
+    ///
+    /// Changes from other systems to a currently dragged entity will not persist as its transform
+    /// will be overwritten with the cached base value.
     base: Transform,
 }
 
@@ -480,6 +551,34 @@ impl EffectType {
             EffectType::Scale => "Scale",
         }
     }
+
+    /// The number of input connections for the variant.
+    fn inputs(&self) -> usize {
+        match self {
+            EffectType::Rgba => 4,
+            EffectType::Hsva => 4,
+            EffectType::Gray => 2,
+            EffectType::Constant => 0,
+            EffectType::Identity => 0,
+            EffectType::Rotate => 1,
+            EffectType::Offset => 1,
+            EffectType::Scale => 1,
+        }
+    }
+
+    /// The number of output connections for the variant.
+    fn outputs(&self) -> usize {
+        match self {
+            EffectType::Rgba => 0,
+            EffectType::Hsva => 0,
+            EffectType::Gray => 0,
+            EffectType::Constant => 1,
+            EffectType::Identity => 1,
+            EffectType::Rotate => 1,
+            EffectType::Offset => 1,
+            EffectType::Scale => 1,
+        }
+    }
 }
 
 /// A marker for being a template in the sidebar, instead of an interactive pipeline element.
@@ -497,6 +596,29 @@ impl Deref for SidebarElement {
         &self.0
     }
 }
+
+/// Input connectors.
+///
+/// Holding the connector entities (which are also children) of pipeline elements in the placement
+/// order from left to right.
+///
+/// # Design
+///
+/// The [OutputConnectors] are a different component to allow system queries to filter for the
+/// specific type directly (on the engine level), instead of going through them on the system level.
+/// This is faster and more convenient to use.
+#[derive(Debug, Clone, Component)]
+struct InputConnectors(Vec<Entity>);
+/// Output connectors, like [InputConnectors].
+#[derive(Debug, Clone, Component)]
+struct OutputConnectors(Vec<Entity>);
+
+/// Marker for an input connector on a pipeline element.
+#[derive(Default, Component)]
+struct InputConnector;
+/// Marker for an output connector on a pipeline element.
+#[derive(Default, Component)]
+struct OutputConnector;
 
 #[derive(Debug, Component, Copy, Clone, Eq, PartialEq)]
 enum MyInteraction {
