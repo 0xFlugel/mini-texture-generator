@@ -43,6 +43,9 @@ const TEXT_SCALING: [f32; 2] = [
 /// The values are normalized to a unit square parent.
 const IO_PAD_SCALING: [f32; 2] = [0.1, 0.2];
 
+//TODO Add a system that removes pipeline elements that are dropped over the sidebar.
+//TODO Add a system that moves overlapping pipeline elements away from each other.
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -63,7 +66,47 @@ fn main() {
         .add_startup_system(setup)
         .add_system(create_element)
         .add_system(dragging)
+        .add_system(start_connecting)
+        .add_system(render_connections)
+        .add_system(highlight_connection_acceptor)
+        .add_system(finish_connection)
+        .add_system(pipeline_update)
         .run();
+}
+
+/// A system to start a connection from an output connector to another pipeline elements input
+/// connector.
+///
+/// The movement for the floating connector is given to the `dragging` system.
+fn start_connecting() {
+    //TODO
+}
+/// Move connection end points according to the global transformations of the attached connectors
+/// and calculate the path of the drawn connecting line.
+///
+/// # Impl
+///
+/// This is not included in the [finish_connection] system to automatically update the line when
+/// a connector moves with a dragged pipeline element.
+fn render_connections() {
+    //TODO
+}
+/// A system to scale up an input connector when dragging a connection over it.
+///
+/// This gives feedback to the user that this interaction is good and also reduces the chances of
+/// slightly missing an accepting drop-off point.
+fn highlight_connection_acceptor(inputs: Query<(&mut Transform, &Parent), With<InputConnector>>) {
+    //TODO
+}
+/// Stop dragging the floating connector, causing the pipeline data structure to change via the
+/// [pipeline_update] system.
+fn finish_connection() {
+    //TODO
+}
+/// Apply changes to the generation functions based on changes to the [Connections] between pipeline
+/// elements' connectors.
+fn pipeline_update() {
+    //TODO
 }
 
 /// A system to create new pipeline elements by copying the clicked sidebar element and initializing
