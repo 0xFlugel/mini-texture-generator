@@ -28,6 +28,15 @@ const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
 const SIDEBAR_WIDTH: f32 = 0.25;
 
+/// The relative path after "/assets" in the project folder -- which containts the Cargo.toml.
+// const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
+const FONT_FILENAME: &'static str = "Roboto-Regular.ttf";
+const FONT_SIZE: f32 = 50.0;
+const TEXT_SCALING: [f32; 2] = [
+    1.0 / (2.0 * FONT_SIZE),
+    1.0 / (2.0 * (2.0 / 3.0) * FONT_SIZE),
+];
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -61,9 +70,13 @@ fn create_element(
         &GlobalTransform,
         &Mesh2dHandle,
         &Handle<ColorMaterial>,
+        &Children,
     )>,
     mouse_position: Res<MousePosition>,
     windows: Res<Windows>,
+    materials: Res<Assets<ColorMaterial>>,
+    font: Res<Handle<Font>>,
+    texts: Query<&Text>,
 ) {
     /// Copy the relevent components directly from the existing template and create a pipeline
     /// element *that is currently being dragged*. The user does not have to click again.
@@ -74,25 +87,52 @@ fn create_element(
             &GlobalTransform,
             &Mesh2dHandle,
             &Handle<ColorMaterial>,
+            &Children,
         ),
         position: Vec3,
         mouse_position: MousePosition,
+        materials: &Assets<ColorMaterial>,
+        font: &Handle<Font>,
+        texts: &Query<&Text>,
     ) {
-        let (SidebarElement(effect), global_transform, mesh, material) = data;
+        let (SidebarElement(effect), global_transform, mesh, material, children) = data;
         let transform = Transform::from(*global_transform).with_translation(position);
-        cmds.spawn_bundle(ColorMesh2dBundle {
+        let label = children
+            .iter()
+            // Ignore non-text entities.
+            .filter_map(|c| texts.get(*c).ok())
+            // Defensively make a multi-line text. It should always be a single line though.
+            .map(|t| {
+                t.sections.iter().map(|section| &section.value).fold(
+                    "".to_string(),
+                    |mut lines, section| {
+                        lines.push('\n');
+                        lines.push_str(section);
+                        lines
+                    },
+                )
+            })
+            .next()
+            .unwrap_or_else(|| {
+                eprintln!("Failed to find the text on the template element.");
+                String::new()
+            });
+        let new = create_pipeline_element(
+            cmds,
+            &label,
+            (*material).clone(),
+            mesh.clone(),
+            &materials,
             transform,
-            mesh: mesh.clone(),
-            material: (*material).clone(),
-            ..Default::default()
-        })
-        .insert(effect.clone())
-        .insert(MyInteraction::Pressed)
-        .insert(Dragging {
-            start: mouse_position,
-            base: transform,
-        })
-        .insert(RayCastMesh::<MyRaycastSet>::default());
+            (*font).clone(),
+        );
+        cmds.entity(new)
+            .insert(effect.clone())
+            .insert(MyInteraction::Pressed)
+            .insert(Dragging {
+                start: mouse_position,
+                base: transform,
+            });
     }
 
     let newly_clicked = changed_interactions
@@ -105,7 +145,15 @@ fn create_element(
     let offset = Vec2::new(window.width() / 2.0, window.height() / 2.0);
     for original_data in newly_clicked {
         let position = (mouse_position.position - offset).extend(original_data.1.translation.z);
-        dragging_element_from_template(&mut cmds, original_data, position, *mouse_position);
+        dragging_element_from_template(
+            &mut cmds,
+            original_data,
+            position,
+            *mouse_position,
+            materials.as_ref(),
+            font.as_ref(),
+            &texts,
+        );
     }
 }
 
@@ -142,12 +190,21 @@ fn dragging(
     }
 }
 
+/// Initialize ressources and the world.
+///
+/// # Parameters
+///
+/// `main_font`: The one font the program will use everywhere.
 fn setup(
     mut cmds: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    asset_server: Res<AssetServer>,
     windows: Res<Windows>,
 ) {
+    let font: Handle<Font> = asset_server.load(FONT_FILENAME);
+    cmds.insert_resource(font.clone());
+
     let window = windows.get_primary().unwrap();
     let x_scale = window.width() / 2.0;
     let y_scale = window.height() / 2.0;
@@ -192,27 +249,92 @@ fn setup(
     for (i, effect) in EffectType::all().iter().enumerate() {
         let num = (3 * n + 1) as f32;
         let offset = (3 * i + 1) as f32;
-        let child = cmds
-            .spawn_bundle(ColorMesh2dBundle {
-                transform: transform_from_rect(
-                    Rect {
-                        top: 1.0 - 2.0 * (offset / num),
-                        bottom: 1.0 - 2.0 * ((offset + 2.0) / num),
-                        left: -0.8,
-                        right: 0.8,
-                    },
-                    1,
-                ),
-                mesh: normalized_square.clone(),
-                material: materials.add(ColorMaterial::from(colors[i])),
-                ..Default::default()
-            })
-            .insert(SidebarElement(*effect))
-            .insert(MyInteraction::default())
-            .insert(RayCastMesh::<MyRaycastSet>::default())
-            .id();
+        let transform = transform_from_rect(
+            Rect {
+                top: 1.0 - 2.0 * (offset / num),
+                bottom: 1.0 - 2.0 * ((offset + 2.0) / num),
+                left: -0.8,
+                right: 0.8,
+            },
+            1,
+        );
+        let child = create_pipeline_element(
+            &mut cmds,
+            &format!("{:?}", effect),
+            materials.add(ColorMaterial::from(colors[i])),
+            normalized_square.clone(),
+            materials.as_ref(),
+            transform,
+            font.clone(),
+        );
+        cmds.entity(child).insert(SidebarElement(*effect));
         cmds.entity(sidebar).add_child(child);
     }
+}
+
+fn create_pipeline_element(
+    cmds: &mut Commands,
+    label: &str,
+    material: Handle<ColorMaterial>,
+    mesh: Mesh2dHandle,
+    materials: &Assets<ColorMaterial>,
+    transform: Transform,
+    font: Handle<Font>,
+) -> Entity {
+    /// Calculates the human visual brightness values of a color.
+    ///
+    /// The HLS variant can unfortunately not just be queried for the L(uminosity) part.
+    fn gray(c: Color) -> f32 {
+        let [r, g, b, a] = c.as_rgba_f32();
+        (0.299 * r + 0.587 * g + 0.114 * b) * a
+    }
+
+    cmds.spawn_bundle(ColorMesh2dBundle {
+        transform,
+        mesh,
+        material: material.clone(),
+        ..Default::default()
+    })
+    .insert(MyInteraction::default())
+    .insert(RayCastMesh::<MyRaycastSet>::default())
+    .with_children(|builder| {
+        let text_color = {
+            let color = materials
+                .get(material)
+                .expect("Original material must exist.")
+                .color;
+            // Set the color to be white or black, whatever is more different than the background.
+            let gray = dbg!(1.0 - dbg!(gray(dbg!(color))).round());
+            Color::rgb(gray, gray, gray)
+        };
+        let sections = label
+            .lines()
+            .map(|line| TextSection {
+                value: line.to_string(),
+                style: TextStyle {
+                    color: text_color,
+                    font_size: FONT_SIZE,
+                    font: font.clone(),
+                },
+            })
+            .collect();
+        builder.spawn_bundle(Text2dBundle {
+            transform: transform
+                .with_scale(Vec2::from(TEXT_SCALING).extend(1.0))
+                // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
+                // front (if something is placed on that layer) while being bit-exact.
+                .with_translation(Vec3::new(0.0, 0.0, 0.5)),
+            text: Text {
+                sections,
+                alignment: TextAlignment {
+                    vertical: VerticalAlign::Center,
+                    horizontal: HorizontalAlign::Center,
+                },
+            },
+            ..Default::default()
+        });
+    })
+    .id()
 }
 
 /// A system to track the mouse location and make it available as a resource.
