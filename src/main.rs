@@ -282,57 +282,68 @@ fn create_pipeline_element(
     font: Handle<Font>,
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
-    ///
-    /// The HLS variant can unfortunately not just be queried for the L(uminosity) part.
     fn gray(c: Color) -> f32 {
+        // The HLS variant can unfortunately not just be queried for the L(uminosity) part.
         let [r, g, b, a] = c.as_rgba_f32();
         (0.299 * r + 0.587 * g + 0.114 * b) * a
     }
 
-    cmds.spawn_bundle(ColorMesh2dBundle {
-        transform,
-        mesh,
-        material: material.clone(),
-        ..Default::default()
-    })
-    .insert(MyInteraction::default())
-    .insert(RayCastMesh::<MyRaycastSet>::default())
-    .with_children(|builder| {
-        let text_color = {
-            let color = materials
-                .get(material)
-                .expect("Original material must exist.")
-                .color;
-            // Set the color to be white or black, whatever is more different than the background.
-            let gray = dbg!(1.0 - dbg!(gray(dbg!(color))).round());
-            Color::rgb(gray, gray, gray)
-        };
-        let sections = label
-            .lines()
-            .map(|line| TextSection {
-                value: line.to_string(),
-                style: TextStyle {
-                    color: text_color,
-                    font_size: FONT_SIZE,
-                    font: font.clone(),
-                },
-            })
-            .collect();
-        builder.spawn_bundle(Text2dBundle {
-            transform: transform
-                .with_scale(Vec2::from(TEXT_SCALING).extend(1.0))
-                // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
-                // front (if something is placed on that layer) while being bit-exact.
-                .with_translation(Vec3::new(0.0, 0.0, 0.5)),
-            text: Text {
-                sections,
-                alignment: TextAlignment {
-                    vertical: VerticalAlign::Center,
-                    horizontal: HorizontalAlign::Center,
-                },
-            },
+    let element = cmds
+        .spawn_bundle(ColorMesh2dBundle {
+            transform,
+            mesh,
+            material: material.clone(),
             ..Default::default()
-        });
+        })
+        .insert(MyInteraction::default())
+        .insert(RayCastMesh::<MyRaycastSet>::default())
+        .id();
+    let text_color = {
+        let background = materials
+            .get(material)
+            .expect("Original material must exist.")
+            .color;
+        // Set the color to be white or black, whatever is more different than the background.
+        let gray = 1.0 - gray(background).round();
+        Color::rgb(gray, gray, gray)
+    };
+    let label = create_text(cmds, label, text_color, transform, &font);
+    cmds.entity(element).add_child(label);
+    element
+}
+
+fn create_text(
+    cmds: &mut Commands,
+    label: &str,
+    color: Color,
+    transform: Transform,
+    font: &Handle<Font>,
+) -> Entity {
+    let sections = label
+        .lines()
+        .map(|line| TextSection {
+            value: line.to_string(),
+            style: TextStyle {
+                color,
+                font_size: FONT_SIZE,
+                font: (*font).clone(),
+            },
+        })
+        .collect();
+    cmds.spawn_bundle(Text2dBundle {
+        transform: transform
+            .with_scale(Vec2::from(TEXT_SCALING).extend(1.0))
+            // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
+            // front (if something is placed on that layer) while being bit-exact.
+            .with_translation(Vec3::new(0.0, 0.0, 0.5)),
+        text: Text {
+            sections,
+            alignment: TextAlignment {
+                vertical: VerticalAlign::Center,
+                horizontal: HorizontalAlign::Center,
+            },
+        },
+        ..Default::default()
     })
     .id()
 }
