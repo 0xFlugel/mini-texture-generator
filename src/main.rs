@@ -118,6 +118,7 @@ fn create_element(
                 String::new()
             });
         let new = create_pipeline_element(
+            *effect,
             cmds,
             &label,
             (*material).clone(),
@@ -259,8 +260,9 @@ fn setup(
             1,
         );
         let child = create_pipeline_element(
+            *effect,
             &mut cmds,
-            &format!("{:?}", effect),
+            effect.name(),
             materials.add(ColorMaterial::from(colors[i])),
             normalized_square.clone(),
             materials.as_ref(),
@@ -272,7 +274,13 @@ fn setup(
     }
 }
 
+/// Create new new entity that is a pipeline element.
+///
+/// # Note
+///
+/// The element is interactive but not tagged as a sidebar element or a active pipeline part.
 fn create_pipeline_element(
+    effect: EffectType,
     cmds: &mut Commands,
     label: &str,
     material: Handle<ColorMaterial>,
@@ -288,6 +296,7 @@ fn create_pipeline_element(
         (0.299 * r + 0.587 * g + 0.114 * b) * a
     }
 
+    // Create main (clickable) box.
     let element = cmds
         .spawn_bundle(ColorMesh2dBundle {
             transform,
@@ -307,8 +316,14 @@ fn create_pipeline_element(
         let gray = 1.0 - gray(background).round();
         Color::rgb(gray, gray, gray)
     };
+
+    // Add label.
     let label = create_text(cmds, label, text_color, transform, &font);
     cmds.entity(element).add_child(label);
+
+    // Add inputs and outputs.
+    //TODO
+
     element
 }
 
@@ -429,7 +444,7 @@ struct Dragging {
 enum EffectType {
     Rgba,
     Hsva,
-    Grey,
+    Gray,
     Constant,
     Identity,
     Rotate,
@@ -438,17 +453,32 @@ enum EffectType {
 }
 
 impl EffectType {
+    /// A list of all variants.
     fn all() -> &'static [Self] {
         &[
             Self::Rgba,
             Self::Hsva,
-            Self::Grey,
+            Self::Gray,
             Self::Constant,
             Self::Identity,
             Self::Rotate,
             Self::Offset,
             Self::Scale,
         ]
+    }
+
+    /// A display name for each variant.
+    fn name(&self) -> &str {
+        match self {
+            EffectType::Rgba => "RGBA",
+            EffectType::Hsva => "HSVA",
+            EffectType::Gray => "GRAY",
+            EffectType::Constant => "Constant",
+            EffectType::Identity => "Identity",
+            EffectType::Rotate => "Rotate",
+            EffectType::Offset => "Offset",
+            EffectType::Scale => "Scale",
+        }
     }
 }
 
