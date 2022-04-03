@@ -22,6 +22,7 @@ use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
     RaycastSystem,
 };
+use either::Either;
 use std::ops::Deref;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
@@ -74,12 +75,89 @@ fn main() {
         .run();
 }
 
-/// A system to start a connection from an output connector to another pipeline elements input
+/// A system to start a [Connection] from an output connector to another pipeline element's input
 /// connector.
 ///
-/// The movement for the floating connector is given to the `dragging` system.
-fn start_connecting() {
-    //TODO
+/// The movement for the floating connector is given to the [dragging] system.
+#[allow(clippy::type_complexity)]
+fn start_connecting(
+    mut cmds: Commands,
+    connector: Query<
+        (
+            Entity,
+            &MyInteraction,
+            &GlobalTransform,
+            Option<&OutputConnector>,
+        ),
+        (
+            Changed<MyInteraction>,
+            Or<(With<OutputConnector>, With<InputConnector>)>,
+            Without<SidebarElement>,
+        ),
+    >,
+    mut connections: Query<(Entity, &mut Connection)>,
+    mouse_pos: Res<MousePosition>,
+) {
+    if let Some((connector, interaction, GlobalTransform { translation, .. }, out_pad_flag)) =
+        connector.iter().next()
+    {
+        let interaction: &MyInteraction = interaction;
+        let out_pad_flag: Option<&OutputConnector> = out_pad_flag;
+        if interaction == &MyInteraction::Pressed {
+            let this_is_output = out_pad_flag.is_some();
+            let existing_connection: Option<(Entity, Mut<Connection>)> =
+                connections.iter_mut().find(|(_, c)| {
+                    let connection_end = if this_is_output {
+                        c.output_connector
+                    } else {
+                        c.input_connector
+                    };
+                    connection_end == Either::Left(connector)
+                });
+            match existing_connection {
+                None => {
+                    let floating_other = cmds
+                        .spawn_bundle((
+                            Draggable,
+                            Dragging {
+                                start: *mouse_pos,
+                                base: Transform::default(),
+                            },
+                            Transform::from_translation(Vec3::from(*translation)),
+                            GlobalTransform::default(),
+                            Visibility { is_visible: false },
+                            ComputedVisibility::default(),
+                        ))
+                        .id();
+                    let (output_connector, input_connector) = if this_is_output {
+                        (Either::Left(connector), Either::Right(floating_other))
+                    } else {
+                        (Either::Right(floating_other), Either::Left(connector))
+                    };
+                    cmds.spawn_bundle((
+                        Connection {
+                            output_connector,
+                            input_connector,
+                        },
+                        VerticalSpline::singularity(Vec3::from(*translation)),
+                    ));
+                }
+                Some((con, connection)) => {
+                    // Disconnect
+                    if this_is_output {
+                        if let Some(output_connector) = connection.output_connector.left() {
+                            //TODO how do i update the background pipeline data? when reacting to a
+                            // `Changed<Connection>` i don't have the old data. so here would be
+                            // better.
+                        } else {
+                            eprintln!("connection already had a floating connector?!");
+                        }
+                    } else {
+                    }
+                }
+            }
+        }
+    }
 }
 /// Move connection end points according to the global transformations of the attached connectors
 /// and calculate the path of the drawn connecting line.
@@ -95,17 +173,12 @@ fn render_connections() {
 ///
 /// This gives feedback to the user that this interaction is good and also reduces the chances of
 /// slightly missing an accepting drop-off point.
-fn highlight_connection_acceptor(inputs: Query<(&mut Transform, &Parent), With<InputConnector>>) {
+fn highlight_connection_acceptor(_inputs: Query<(&mut Transform, &Parent), With<InputConnector>>) {
     //TODO
 }
 /// Stop dragging the floating connector, causing the pipeline data structure to change via the
 /// [pipeline_update] system.
 fn finish_connection() {
-    //TODO
-}
-/// Apply changes to the generation functions based on changes to the [Connections] between pipeline
-/// elements' connectors.
-fn pipeline_update() {
     //TODO
 }
 
@@ -503,11 +576,12 @@ fn apply_interactions(
         if let MouseButtonInput {
             button: MouseButton::Left,
             state,
-        } = input {
+        } = input
+        {
             match state {
                 ElementState::Pressed => {
                     if let Some((_, mut interaction)) =
-                    hovering.and_then(|pressed| interactive.get_mut(pressed).ok())
+                        hovering.and_then(|pressed| interactive.get_mut(pressed).ok())
                     {
                         *interaction = MyInteraction::Pressed;
                     }
@@ -536,6 +610,44 @@ fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
     let scale_y = (rect.top - rect.bottom) / 2.0;
     Transform::from_translation(Vec3::new(x, y, layer as _))
         .with_scale(Vec3::new(scale_x, scale_y, 1.0))
+}
+
+/// A connection between a pipeline element's output and another one's input connector.
+///
+/// It can have both ends be connected to an [InputConnector] or [OutputConnector] (which is saved
+/// in `Either::Left`) or floating at a position on screen (in `Either::Right`). A floating end is
+/// connected to a temporary entity that is being dragged.
+///
+/// The ends of existing connections can be dragged to other connectors, too (s. [start_connecting]).
+///
+/// # Design
+///
+/// The either class is used to have at least some type safety support to not accidentally delete
+/// the wrong entity when finishing a dragging operation (and deleting the floating connector).
+#[derive(Debug, Component)]
+struct Connection {
+    /// Left: Connector of pipeline element; Right: Floating
+    output_connector: Either<Entity, Entity>,
+    /// Left: Connector of pipeline element; Right: Floating
+    input_connector: Either<Entity, Entity>,
+}
+/// The data for showing a line on screen.
+#[derive(Debug, Component)]
+struct VerticalSpline(Vec<Vec3>);
+
+impl VerticalSpline {
+    /// Create a new instance with a zero length line at a given point in space.
+    fn singularity(point: Vec3) -> Self {
+        Self::new(vec![point])
+    }
+    /// Create a new instance with given curve data.
+    fn new(inner: Vec<Vec3>) -> Self {
+        Self(inner)
+    }
+    /// Build a line that starts and ends vertically at the given points.
+    fn _from_end_points(_a: Vec3, _b: Vec3) -> Self {
+        todo!()
+    }
 }
 
 /// A marker for entities that can be dragged.

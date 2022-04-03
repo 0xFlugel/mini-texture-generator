@@ -13,6 +13,8 @@ bevy = { git = "https://github.com/bevyengine/bevy", branch = "main", features =
 # mismatches.
 bevy_mod_raycast = { path="bevy_mod_raycast" }
 
+either = "1.6.1"
+
 # (https://bevy-cheatbook.github.io/pitfalls/performance.html):
 # Enable only a small amount of optimization in debug mode
 [profile.dev]
