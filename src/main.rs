@@ -30,7 +30,7 @@ const SIDEBAR_WIDTH: f32 = 0.25;
 
 /// The relative path after "/assets" in the project folder -- which containts the Cargo.toml.
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
-const FONT_FILENAME: &'static str = "Roboto-Regular.ttf";
+const FONT_FILENAME: &str = "Roboto-Regular.ttf";
 /// Text size, high enough to have a acceptable render quality.
 const FONT_SIZE: f32 = 50.0;
 /// This is set to fit all text into the pipeline elements & scales automatically with [FONT_SIZE].
@@ -111,6 +111,7 @@ fn pipeline_update() {
 
 /// A system to create new pipeline elements by copying the clicked sidebar element and initializing
 /// a dragging state.
+#[allow(clippy::type_complexity)]
 fn create_element(
     mut cmds: Commands,
     changed_interactions: Query<(Entity, &MyInteraction), Changed<MyInteraction>>,
@@ -177,7 +178,7 @@ fn create_element(
             (*font).clone(),
         );
         cmds.entity(new)
-            .insert(effect.clone())
+            .insert(*effect)
             .insert(MyInteraction::Pressed)
             .insert(Draggable)
             .insert(Dragging {
@@ -209,6 +210,7 @@ fn create_element(
 }
 
 /// Drag entities around their XY plane depending on cursor movement.
+#[allow(clippy::type_complexity)]
 fn dragging(
     start: Query<(Entity, &MyInteraction, &Transform), (With<Draggable>, Without<Dragging>)>,
     mut continue_: Query<(&Dragging, &mut Transform)>,
@@ -221,7 +223,7 @@ fn dragging(
         .filter(|(_, i, _)| **i == MyInteraction::Pressed)
         .for_each(|(e, _, base)| {
             cmds.entity(e).insert(Dragging {
-                start: current_mouse_position.clone(),
+                start: *current_mouse_position,
                 base: *base,
             });
         });
@@ -495,18 +497,17 @@ fn apply_interactions(
         .iter()
         .filter_map(RayCastSource::intersect_list)
         .flatten()
-        .map(|(target, _)| target.clone())
+        .map(|(target, _)| *target)
         .next();
     for input in events.iter() {
-        #[allow(unreachable_patterns)] // catch-all arm is a false-positive
-        match input {
-            MouseButtonInput {
-                button: MouseButton::Left,
-                state,
-            } => match state {
+        if let MouseButtonInput {
+            button: MouseButton::Left,
+            state,
+        } = input {
+            match state {
                 ElementState::Pressed => {
                     if let Some((_, mut interaction)) =
-                        hovering.and_then(|pressed| interactive.get_mut(pressed).ok())
+                    hovering.and_then(|pressed| interactive.get_mut(pressed).ok())
                     {
                         *interaction = MyInteraction::Pressed;
                     }
@@ -517,8 +518,7 @@ fn apply_interactions(
                         *interaction = MyInteraction::None;
                     }
                 }
-            },
-            _ => {}
+            }
         }
     }
 }
