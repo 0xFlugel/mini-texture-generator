@@ -137,12 +137,7 @@ fn start_connecting(
                     input_connector: ConnectionAttachment::Floating(floating),
                 },
                 transform: Transform::default(),
-                mesh: mesh_assets
-                    .add(
-                        VerticalSpline::singularity(translation, transform.scale.x / 2.0)
-                            .gen_mesh(),
-                    )
-                    .into(),
+                mesh: mesh_assets.add(gen_line(&[translation])).into(),
                 material: (*material).clone(),
                 global_transform: Default::default(),
                 visibility: Default::default(),
@@ -184,7 +179,7 @@ fn render_connections(
         let in_transform = connectors.get(connection.input_connector.entity()).unwrap();
         let to = in_transform.mul_vec3(Vec3::new(0.0, -1.0, 0.0));
 
-        let line_mesh = VerticalSpline::new(vec![from, to], 1.0).gen_mesh();
+        let line_mesh = gen_line(&[from, to]);
         if let Some(mesh) = mesh {
             *mesh = line_mesh;
         } else {
@@ -779,49 +774,33 @@ fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
         .with_scale(Vec3::new(scale_x, scale_y, 1.0))
 }
 
-/// The data for showing a line on screen.
-#[derive(Debug, Component)]
-struct VerticalSpline {
-    points: Vec<Vec3>,
-    width: f32,
-}
-
-impl VerticalSpline {
-    /// Create a new instance with a zero length line at a given point in space.
-    fn singularity(point: Vec3, width: f32) -> Self {
-        Self::new(vec![point], width)
+/// Return a mesh that forms a line draw on screen based on point forming a curve.
+//TODO Extend to generate a spline.
+fn gen_line(points: &[Vec3]) -> Mesh {
+    let mut mesh = Mesh::new(PrimitiveTopology::LineStrip);
+    if points.len() < 2 {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 0]);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0; 3]; 0]);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0; 3]; 0]);
+    } else {
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            points.iter().map(Vec3::to_array).collect::<Vec<_>>(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_NORMAL,
+            std::iter::repeat([0.0, 0.0, 1.0])
+                .take(points.len())
+                .collect::<Vec<_>>(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            std::iter::repeat([0.0, 0.0])
+                .take(points.len())
+                .collect::<Vec<_>>(),
+        );
     }
-    /// Create a new instance with given curve data.
-    fn new(points: Vec<Vec3>, width: f32) -> Self {
-        Self { points, width }
-    }
-    /// Return a mesh that forms a line draw on screen.
-    fn gen_mesh(&self) -> Mesh {
-        let mut mesh = Mesh::new(PrimitiveTopology::LineStrip);
-        if self.points.len() < 2 {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 0]);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0; 3]; 0]);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0; 3]; 0]);
-        } else {
-            mesh.insert_attribute(
-                Mesh::ATTRIBUTE_POSITION,
-                self.points.iter().map(Vec3::to_array).collect::<Vec<_>>(),
-            );
-            mesh.insert_attribute(
-                Mesh::ATTRIBUTE_NORMAL,
-                std::iter::repeat([0.0, 0.0, 1.0])
-                    .take(self.points.len())
-                    .collect::<Vec<_>>(),
-            );
-            mesh.insert_attribute(
-                Mesh::ATTRIBUTE_UV_0,
-                std::iter::repeat([0.0, 0.0])
-                    .take(self.points.len())
-                    .collect::<Vec<_>>(),
-            );
-        }
-        mesh
-    }
+    mesh
 }
 
 /// A marker for entities that can be dragged.
