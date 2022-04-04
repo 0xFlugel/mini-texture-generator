@@ -159,14 +159,22 @@ fn start_connecting(
 ///
 /// This is not included in the [finish_connection] system to automatically update the line when
 /// a connector moves with a dragged pipeline element.
-///
-/// TODO: Optimize: Recalculate only when GlobalTransforms changed.
 fn render_connections(
+    changed_out: Query<&OutputConnector, Changed<GlobalTransform>>,
+    changed_in: Query<&InputConnector, Changed<GlobalTransform>>,
+    changed_float: Query<&FloatingConnector, Changed<GlobalTransform>>,
     connections: Query<(&Connection, &Mesh2dHandle)>,
     connectors: Query<&GlobalTransform>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    for (connection, mesh) in connections.iter() {
+    let changed_connections = changed_out
+        .iter()
+        .flat_map(|o| o.0.iter())
+        .chain(changed_in.iter().flat_map(|i| i.0.iter()))
+        .chain(changed_float.iter().map(|f| &f.connection))
+        // Silently ignore lookup failures.
+        .filter_map(|con| connections.get(*con).ok());
+    for (connection, mesh) in changed_connections {
         let connection: &Connection = connection;
         let mesh: Option<&mut Mesh> = meshes.get_mut((*mesh).clone().0);
 
