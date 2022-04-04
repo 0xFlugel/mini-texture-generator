@@ -17,12 +17,12 @@
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ElementState;
 use bevy::prelude::*;
+use bevy::render::render_resource::PrimitiveTopology;
 use bevy::sprite::Mesh2dHandle;
 use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
     RaycastSystem,
 };
-use either::Either;
 use std::ops::Deref;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
@@ -46,6 +46,7 @@ const IO_PAD_SCALING: [f32; 2] = [0.1, 0.2];
 
 //TODO Add a system that removes pipeline elements that are dropped over the sidebar.
 //TODO Add a system that moves overlapping pipeline elements away from each other.
+//TODO Turn inserting multiple components on new entities into bundels for better readability.
 
 fn main() {
     App::new()
@@ -71,7 +72,6 @@ fn main() {
         .add_system(render_connections)
         .add_system(highlight_connection_acceptor)
         .add_system(finish_connection)
-        .add_system(pipeline_update)
         .run();
 }
 
@@ -82,83 +82,77 @@ fn main() {
 #[allow(clippy::type_complexity)]
 fn start_connecting(
     mut cmds: Commands,
-    connector: Query<
+    mut clicked_output: Query<
         (
             Entity,
             &MyInteraction,
             &GlobalTransform,
-            Option<&OutputConnector>,
+            &mut OutputConnector,
         ),
-        (
-            Changed<MyInteraction>,
-            Or<(With<OutputConnector>, With<InputConnector>)>,
-            Without<SidebarElement>,
-        ),
+        (Changed<MyInteraction>, Without<SidebarElement>),
     >,
-    mut connections: Query<(Entity, &mut Connection)>,
+    meshes: Query<&Mesh2dHandle>,
+    materials: Query<&Handle<ColorMaterial>>,
     mouse_pos: Res<MousePosition>,
+    mut mesh_assets: ResMut<Assets<Mesh>>,
 ) {
-    if let Some((connector, interaction, GlobalTransform { translation, .. }, out_pad_flag)) =
-        connector.iter().next()
+    for (connector, _, transform, connections) in clicked_output
+        .iter_mut()
+        .filter(|(_, i, _, _)| i == &&MyInteraction::Pressed)
     {
-        let interaction: &MyInteraction = interaction;
-        let out_pad_flag: Option<&OutputConnector> = out_pad_flag;
-        if interaction == &MyInteraction::Pressed {
-            let this_is_output = out_pad_flag.is_some();
-            let existing_connection: Option<(Entity, Mut<Connection>)> =
-                connections.iter_mut().find(|(_, c)| {
-                    let connection_end = if this_is_output {
-                        c.output_connector
-                    } else {
-                        c.input_connector
-                    };
-                    connection_end == Either::Left(connector)
-                });
-            match existing_connection {
-                None => {
-                    let floating_other = cmds
-                        .spawn_bundle((
-                            Draggable,
-                            Dragging {
-                                start: *mouse_pos,
-                                base: Transform::default(),
-                            },
-                            Transform::from_translation(Vec3::from(*translation)),
-                            GlobalTransform::default(),
-                            Visibility { is_visible: false },
-                            ComputedVisibility::default(),
-                        ))
-                        .id();
-                    let (output_connector, input_connector) = if this_is_output {
-                        (Either::Left(connector), Either::Right(floating_other))
-                    } else {
-                        (Either::Right(floating_other), Either::Left(connector))
-                    };
-                    cmds.spawn_bundle((
-                        Connection {
-                            output_connector,
-                            input_connector,
-                        },
-                        VerticalSpline::singularity(Vec3::from(*translation)),
-                    ));
-                }
-                Some((con, connection)) => {
-                    // Disconnect
-                    if this_is_output {
-                        if let Some(output_connector) = connection.output_connector.left() {
-                            //TODO how do i update the background pipeline data? when reacting to a
-                            // `Changed<Connection>` i don't have the old data. so here would be
-                            // better.
-                        } else {
-                            eprintln!("connection already had a floating connector?!");
-                        }
-                    } else {
-                    }
-                }
-            }
-        }
+        let connector: Entity = connector;
+        let translation = Vec3::from(transform.translation);
+        let mut connections: Mut<OutputConnector> = connections;
+
+        let transform = Transform::from_translation(translation);
+        let material = materials.get(connector).expect("connector has a material.");
+        let floating = cmds
+            .spawn_bundle((
+                meshes
+                    .get(connector)
+                    .expect("connector has a mesh.")
+                    .clone(),
+                (*material).clone(),
+                transform,
+                Draggable,
+                Dragging {
+                    base: transform,
+                    start: *mouse_pos,
+                },
+                RayCastMesh::<MyRaycastSet>::default(),
+                MyInteraction::Pressed,
+                GlobalTransform::default(),
+                Visibility::default(),
+                ComputedVisibility::default(),
+            ))
+            .id();
+        let outgoing = cmds
+            .spawn_bundle(ConnectionBundle {
+                connection: Connection {
+                    output_connector: ConnectionAttachment::Connector(connector),
+                    input_connector: ConnectionAttachment::Floating(floating),
+                },
+                transform: Transform::default(),
+                mesh: mesh_assets
+                    .add(
+                        VerticalSpline::singularity(translation, transform.scale.x / 2.0)
+                            .gen_mesh(),
+                    )
+                    .into(),
+                material: (*material).clone(),
+                global_transform: Default::default(),
+                visibility: Default::default(),
+                comp_vis: Default::default(),
+            })
+            .id();
+        cmds.entity(floating).insert(FloatingConnector {
+            connection: outgoing,
+            drop_on: None,
+        });
+        connections.0.push(outgoing);
     }
 }
+
 /// Move connection end points according to the global transformations of the attached connectors
 /// and calculate the path of the drawn connecting line.
 ///
@@ -173,13 +167,109 @@ fn render_connections() {
 ///
 /// This gives feedback to the user that this interaction is good and also reduces the chances of
 /// slightly missing an accepting drop-off point.
-fn highlight_connection_acceptor(_inputs: Query<(&mut Transform, &Parent), With<InputConnector>>) {
-    //TODO
+fn highlight_connection_acceptor(
+    inputs: Query<&Parent, With<InputConnector>>,
+    outputs: Query<&Parent, With<OutputConnector>>,
+    floating: Query<(&FloatingConnector, &GlobalTransform)>,
+    connections: Query<&Connection>,
+    mut transforms: Query<(&mut Transform, &GlobalTransform)>,
+    mut highlighted: Local<Vec<(Entity, Transform)>>,
+) {
+    // Update drop_on field.
+    for (
+        FloatingConnector {
+            connection,
+            drop_on,
+        },
+        GlobalTransform { translation, .. },
+    ) in floating.iter()
+    {
+        // Possible approaches:
+        //
+        // 1) Taking the point `translation` (=global_transform*Vec3(0,0,0)) and manually checking
+        //    the rectangle bounds of fall connectors.
+        // 2) Taking the point `translation` and making a raycast.
+        // 3) Add `MyInteraction::Hover` and updating it in `apply_interactions`, then checking it
+        //    here.
+        // 4) Implementing a proper mesh-mesh overlap algorithm.
+        //
+        // 1) and 4) are unnecessarily complex. 2) is possible but not extendable. 3) is the way
+        // that is best to base more code on later.
+        todo!()
+    }
+
+    // Highlight
+    for (e, t) in highlighted.iter() {
+        if let Ok((mut transform, _global)) = transforms.get_mut(*e) {
+            *transform = *t;
+        }
+    }
+    highlighted.clear();
+    for connector in floating.iter().filter_map(|(f, _)| f.drop_on) {
+        if let Ok((mut transform, _global)) = transforms.get_mut(connector) {
+            highlighted.push((connector, *transform));
+            transform.scale *= Vec3::new(1.2, 1.2, 1.0);
+        }
+    }
 }
 /// Stop dragging the floating connector, causing the pipeline data structure to change via the
 /// [pipeline_update] system.
-fn finish_connection() {
-    //TODO
+fn finish_connection(
+    mut cmds: Commands,
+    dropped_floating: Query<(Entity, &FloatingConnector), Without<Dragging>>,
+    mut connections: Query<&mut Connection>,
+    mut inputs: Query<&mut InputConnector>,
+    mut outputs: Query<&mut OutputConnector>,
+) {
+    for (
+        floating_connector,
+        FloatingConnector {
+            drop_on,
+            connection,
+        },
+    ) in dropped_floating.iter()
+    {
+        match drop_on {
+            None => cmds.entity(*connection).despawn(),
+            Some(drop_connector) => {
+                if let Ok(Connection {
+                    input_connector,
+                    output_connector,
+                }) = connections.get(*connection)
+                {
+                    match (input_connector, output_connector) {
+                        (ConnectionAttachment::Connector(_), ConnectionAttachment::Floating(_)) => {
+                            outputs
+                                .get_mut(*drop_connector)
+                                .unwrap()
+                                .0
+                                .push(*connection);
+                            connections.get_mut(*connection).unwrap().output_connector =
+                                ConnectionAttachment::Connector(*drop_connector);
+                        }
+                        (ConnectionAttachment::Floating(_), ConnectionAttachment::Connector(_)) => {
+                            inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
+                            connections.get_mut(*connection).unwrap().input_connector =
+                                ConnectionAttachment::Connector(*drop_connector);
+                        }
+                        (ConnectionAttachment::Floating(_), ConnectionAttachment::Floating(_)) => {
+                            eprintln!(
+                                "Connection should not have two floaing connectors... Ignoring."
+                            );
+                            cmds.entity(*connection).despawn();
+                        }
+                        (_, _) => {
+                            eprintln!("Connection does not have a floating connector?!");
+                            cmds.entity(*connection).despawn();
+                        }
+                    }
+                } else {
+                    eprintln!("Connection does not exist?!");
+                }
+            }
+        }
+        cmds.entity(floating_connector).despawn();
+    }
 }
 
 /// A system to create new pipeline elements by copying the clicked sidebar element and initializing
@@ -612,41 +702,48 @@ fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
         .with_scale(Vec3::new(scale_x, scale_y, 1.0))
 }
 
-/// A connection between a pipeline element's output and another one's input connector.
-///
-/// It can have both ends be connected to an [InputConnector] or [OutputConnector] (which is saved
-/// in `Either::Left`) or floating at a position on screen (in `Either::Right`). A floating end is
-/// connected to a temporary entity that is being dragged.
-///
-/// The ends of existing connections can be dragged to other connectors, too (s. [start_connecting]).
-///
-/// # Design
-///
-/// The either class is used to have at least some type safety support to not accidentally delete
-/// the wrong entity when finishing a dragging operation (and deleting the floating connector).
-#[derive(Debug, Component)]
-struct Connection {
-    /// Left: Connector of pipeline element; Right: Floating
-    output_connector: Either<Entity, Entity>,
-    /// Left: Connector of pipeline element; Right: Floating
-    input_connector: Either<Entity, Entity>,
-}
 /// The data for showing a line on screen.
 #[derive(Debug, Component)]
-struct VerticalSpline(Vec<Vec3>);
+struct VerticalSpline {
+    points: Vec<Vec3>,
+    width: f32,
+}
 
 impl VerticalSpline {
     /// Create a new instance with a zero length line at a given point in space.
-    fn singularity(point: Vec3) -> Self {
-        Self::new(vec![point])
+    fn singularity(point: Vec3, width: f32) -> Self {
+        Self::new(vec![point], width)
     }
     /// Create a new instance with given curve data.
-    fn new(inner: Vec<Vec3>) -> Self {
-        Self(inner)
+    fn new(points: Vec<Vec3>, width: f32) -> Self {
+        Self { points, width }
     }
-    /// Build a line that starts and ends vertically at the given points.
-    fn _from_end_points(_a: Vec3, _b: Vec3) -> Self {
-        todo!()
+    /// Return a mesh that forms a line draw on screen.
+    fn gen_mesh(&self) -> Mesh {
+        let mut mesh = Mesh::new(PrimitiveTopology::LineStrip);
+        if self.points.len() < 2 {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 0]);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0; 3]; 0]);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0; 3]; 0]);
+        } else {
+            mesh.insert_attribute(
+                Mesh::ATTRIBUTE_POSITION,
+                self.points.iter().map(Vec3::to_array).collect::<Vec<_>>(),
+            );
+            mesh.insert_attribute(
+                Mesh::ATTRIBUTE_NORMAL,
+                std::iter::repeat([0.0, 0.0, 1.0])
+                    .take(self.points.len())
+                    .collect::<Vec<_>>(),
+            );
+            mesh.insert_attribute(
+                Mesh::ATTRIBUTE_UV_0,
+                std::iter::repeat([0.0, 0.0])
+                    .take(self.points.len())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        mesh
     }
 }
 
@@ -768,12 +865,35 @@ struct InputConnectors(Vec<Entity>);
 #[derive(Debug, Clone, Component)]
 struct OutputConnectors(Vec<Entity>);
 
-/// Marker for an input connector on a pipeline element.
-#[derive(Default, Component)]
-struct InputConnector;
-/// Marker for an output connector on a pipeline element.
-#[derive(Default, Component)]
-struct OutputConnector;
+/// An input connector on a pipeline element.
+///
+/// It holds an incoming [Connection].
+#[derive(Debug, Default, Copy, Clone, Component)]
+struct InputConnector(Option<Entity>);
+/// An output connector on a pipeline element. The opposite of an [InputConnector].
+///
+/// It holds a list of all outgoing [Connection]s.
+#[derive(Debug, Default, Clone, Component)]
+struct OutputConnector(Vec<Entity>);
+/// A temporary floating connector entity that exists while the user creates a connection.
+#[derive(Debug, Component)]
+struct FloatingConnector {
+    drop_on: Option<Entity>,
+    connection: Entity,
+}
+/// A connection between an [OutputConnector] and an [InputConnector] or a free end point while
+/// dragging a connection to a new connector.
+#[derive(Debug, Component)]
+struct Connection {
+    output_connector: ConnectionAttachment,
+    input_connector: ConnectionAttachment,
+}
+/// A helper type for naming the variants of entities a connection can be attached to.
+#[derive(Debug, Copy, Clone)]
+enum ConnectionAttachment {
+    Connector(Entity),
+    Floating(Entity),
+}
 
 #[derive(Debug, Component, Copy, Clone, Eq, PartialEq)]
 enum MyInteraction {
@@ -796,6 +916,79 @@ struct MousePosition {
 
 /// A marker for ray-castable entities.
 struct MyRaycastSet;
+
+/// A bundle for creating a full pipeline element entity.
+#[derive(Bundle)]
+struct PipelineElementBundle {
+    effect: EffectType,
+    inputs: InputConnectors,
+    outputs: OutputConnectors,
+    interaction: MyInteraction,
+    raycast_set: RayCastMesh<MyRaycastSet>,
+    mesh: Mesh2dHandle,
+    material: Handle<ColorMaterial>,
+    transform: Transform,
+    global_transform: GlobalTransform,
+    visibility: Visibility,
+    comp_vis: ComputedVisibility,
+}
+
+/// A bundle for creating a full [OutputConnector].
+#[derive(Bundle)]
+struct OutputConnectorBundle {
+    connector: OutputConnector,
+    interaction: MyInteraction,
+    ray_cast_set: RayCastMesh<MyRaycastSet>,
+    mesh: Mesh2dHandle,
+    material: Handle<ColorMaterial>,
+    transform: Transform,
+    global_transform: GlobalTransform,
+    visibility: Visibility,
+    comp_vis: ComputedVisibility,
+}
+
+/// A bundle for creating a full [InputConnector].
+#[derive(Bundle)]
+struct InputConnectorBundle {
+    connector: InputConnector,
+    interaction: MyInteraction,
+    ray_cast_set: RayCastMesh<MyRaycastSet>,
+    mesh: Mesh2dHandle,
+    material: Handle<ColorMaterial>,
+    transform: Transform,
+    global_transform: GlobalTransform,
+    visibility: Visibility,
+    comp_vis: ComputedVisibility,
+}
+
+/// A bundle for creating a full [InputConnector].
+#[derive(Bundle)]
+struct FloatingConnectorBundle {
+    dragging: Dragging,
+    draggable: Draggable,
+    interaction: MyInteraction,
+    ray_cast_set: RayCastMesh<MyRaycastSet>,
+    mesh: Mesh2dHandle,
+    material: Handle<ColorMaterial>,
+    transform: Transform,
+    global_transform: GlobalTransform,
+    visibility: Visibility,
+    comp_vis: ComputedVisibility,
+}
+
+/// A bundle for creating the a full [Connection] entity.
+#[derive(Bundle)]
+struct ConnectionBundle {
+    /// The essential data that is manipulated by user interactions.
+    connection: Connection,
+    /// Should be generated via [VerticalSpline].
+    mesh: Mesh2dHandle,
+    material: Handle<ColorMaterial>,
+    transform: Transform,
+    global_transform: GlobalTransform,
+    visibility: Visibility,
+    comp_vis: ComputedVisibility,
+}
 
 #[cfg(test)]
 mod tests {
