@@ -19,7 +19,7 @@ use bevy::input::ElementState;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 use bevy::sprite::Mesh2dHandle;
-use bevy::utils::HashSet;
+use bevy::utils::{HashMap, HashSet};
 use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
     RaycastSystem,
@@ -44,6 +44,9 @@ const TEXT_SCALING: [f32; 2] = [
 ///
 /// The values are normalized to a unit square parent.
 const IO_PAD_SCALING: [f32; 2] = [0.1, 0.2];
+
+/// The scaling factor for highlighting connector drop off points on hovering.
+const HIGHLIGHT_SCALING: f32 = 1.5;
 
 //TODO Add a system that removes pipeline elements that are dropped over the sidebar.
 //TODO Add a system that moves overlapping pipeline elements away from each other.
@@ -171,32 +174,55 @@ fn render_connections() {
 fn highlight_connection_acceptor(
     inputs: Query<&Parent, With<InputConnector>>,
     outputs: Query<&Parent, With<OutputConnector>>,
-    floating: Query<(&FloatingConnector, &GlobalTransform)>,
+    mut floating_connectors: Query<&mut FloatingConnector>,
     connections: Query<&Connection>,
     mut transforms: Query<(&mut Transform, &GlobalTransform)>,
-    mut highlighted: Local<Vec<(Entity, Transform)>>,
+    interaction_changed: Query<
+        (Entity, &MyInteraction),
+        (
+            Changed<MyInteraction>,
+            Or<(With<InputConnector>, With<OutputConnector>)>,
+        ),
+    >,
+    mut highlighted: Local<HashMap<Entity, Transform>>,
 ) {
+    //TODO Make the function more readable.
+    //TODO Exlude same-type-connectors (input-input, out-out).
+
     // Update drop_on field.
-    for (
-        FloatingConnector {
-            connection,
-            drop_on,
-        },
-        GlobalTransform { translation, .. },
-    ) in floating.iter()
-    {
-        // Possible approaches:
-        //
-        // 1) Taking the point `translation` (=global_transform*Vec3(0,0,0)) and manually checking
-        //    the rectangle bounds of fall connectors.
-        // 2) Taking the point `translation` and making a raycast.
-        // 3) Add `MyInteraction::Hover` and updating it in `apply_interactions`, then checking it
-        //    here.
-        // 4) Implementing a proper mesh-mesh overlap algorithm.
-        //
-        // 1) and 4) are unnecessarily complex. 2) is possible but not extendable. 3) is the way
-        // that is best to base more code on later.
-        todo!()
+    // Depends on the `highlighted` data from the last update.
+    if let Some(mut f) = floating_connectors.iter_mut().next() {
+        for (connector, interaction) in interaction_changed.iter() {
+            if let Ok(hover_parent) = inputs.get(connector).or_else(|_| outputs.get(connector)) {
+                // Only consider IO connectors for the open connection end.
+                let is_other_element = match connections.get(f.connection) {
+                    Ok(Connection {
+                        input_connector: ConnectionAttachment::Floating(_),
+                        output_connector: ConnectionAttachment::Connector(other_end),
+                    }) => outputs
+                        .get(*other_end)
+                        .map_or(true, |parent| parent != hover_parent),
+                    Ok(Connection {
+                        input_connector: ConnectionAttachment::Connector(other_end),
+                        output_connector: ConnectionAttachment::Floating(_),
+                    }) => inputs
+                        .get(*other_end)
+                        .map_or(true, |parent| parent != hover_parent),
+                    _ => false,
+                };
+                if is_other_element {
+                    match *interaction {
+                        MyInteraction::Hover => {
+                            f.drop_on = Some(connector);
+                        }
+                        MyInteraction::None if highlighted.contains_key(&connector) => {
+                            f.drop_on = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     // Highlight
@@ -206,10 +232,10 @@ fn highlight_connection_acceptor(
         }
     }
     highlighted.clear();
-    for connector in floating.iter().filter_map(|(f, _)| f.drop_on) {
+    for connector in floating_connectors.iter().filter_map(|f| f.drop_on) {
         if let Ok((mut transform, _global)) = transforms.get_mut(connector) {
-            highlighted.push((connector, *transform));
-            transform.scale *= Vec3::new(1.2, 1.2, 1.0);
+            highlighted.insert(connector, *transform);
+            transform.scale *= Vec3::new(HIGHLIGHT_SCALING, HIGHLIGHT_SCALING, 1.0);
         }
     }
 }
