@@ -14,6 +14,7 @@
 //! recursively resolving its the values for all pixel positions per input connector.
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
+use bevy::ecs::query::QueryEntityError;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -285,7 +286,8 @@ fn finish_connection(
     ) in dropped_floating.iter()
     {
         match drop_on {
-            None => cmds.entity(*connection).despawn(),
+            #[rustfmt::skip]
+            None => delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs),
             Some(drop_connector) => {
                 if let Ok(Connection {
                     input_connector,
@@ -293,37 +295,80 @@ fn finish_connection(
                 }) = connections.get(*connection)
                 {
                     match (input_connector, output_connector) {
+                        // Was dropped on output connector.
                         (ConnectionAttachment::Connector(_), ConnectionAttachment::Floating(_)) => {
-                            outputs
-                                .get_mut(*drop_connector)
-                                .unwrap()
-                                .0
-                                .push(*connection);
+                            #[rustfmt::skip]
+                            outputs.get_mut(*drop_connector).unwrap().0.push(*connection);
                             connections.get_mut(*connection).unwrap().output_connector =
                                 ConnectionAttachment::Connector(*drop_connector);
                         }
+                        // Was dropped on input connector.
                         (ConnectionAttachment::Floating(_), ConnectionAttachment::Connector(_)) => {
-                            inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
+                            if let Some(previous) = inputs.get(*drop_connector).unwrap().0 {
+                                #[rustfmt::skip]
+                                delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs);
+                            }
+                            *&mut inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
                             connections.get_mut(*connection).unwrap().input_connector =
                                 ConnectionAttachment::Connector(*drop_connector);
                         }
-                        (ConnectionAttachment::Floating(_), ConnectionAttachment::Floating(_)) => {
-                            eprintln!(
-                                "Connection should not have two floaing connectors... Ignoring."
-                            );
-                            cmds.entity(*connection).despawn();
-                        }
-                        (_, _) => {
-                            eprintln!("Connection does not have a floating connector?!");
-                            cmds.entity(*connection).despawn();
+                        // Illegal states.
+                        _ => {
+                            eprintln!("Deleted a connection with illegal state.");
+                            #[rustfmt::skip]
+                            delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs);
                         }
                     }
                 } else {
                     eprintln!("Connection does not exist?!");
                 }
+                cmds.entity(floating_connector).despawn();
             }
         }
-        cmds.entity(floating_connector).despawn();
+    }
+}
+
+/// Properly despawn a connection, incl. the floating connector, and remove the references from IO
+/// pads to it.
+fn delete_connection<'a>(
+    connection: Entity,
+    cmds: &'a mut Commands,
+    connections: &Query<&mut Connection>,
+    inputs: &mut Query<&mut InputConnector>,
+    outputs: &mut Query<&mut OutputConnector>,
+) {
+    fn inner<'a>(
+        connection: Entity,
+        cmds: &'a mut Commands,
+        connections: &Query<&mut Connection>,
+        inputs: &mut Query<&mut InputConnector>,
+        outputs: &mut Query<&mut OutputConnector>,
+    ) -> Result<(), QueryEntityError> {
+        let Connection {
+            input_connector,
+            output_connector,
+        } = connections.get(connection)?;
+        match input_connector {
+            ConnectionAttachment::Floating(connector) => cmds.entity(*connector).despawn(),
+            ConnectionAttachment::Connector(connector) => inputs.get_mut(*connector)?.0 = None,
+        }
+        match output_connector {
+            ConnectionAttachment::Floating(connector) => cmds.entity(*connector).despawn(),
+            ConnectionAttachment::Connector(connector) => {
+                let outgoing_connections = &mut outputs.get_mut(*connector)?.0;
+                if let Some(idx) = outgoing_connections
+                    .iter()
+                    .position(|con| *con == connection)
+                {
+                    outgoing_connections.remove(idx);
+                }
+            }
+        };
+        cmds.entity(connection).despawn();
+        Ok(())
+    }
+    if inner(connection, cmds, connections, inputs, outputs).is_err() {
+        eprintln!("Failed to look up some entity while deleting an orphaned connection.");
     }
 }
 
