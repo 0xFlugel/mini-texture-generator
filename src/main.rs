@@ -164,8 +164,33 @@ fn start_connecting(
 ///
 /// This is not included in the [finish_connection] system to automatically update the line when
 /// a connector moves with a dragged pipeline element.
-fn render_connections() {
-    //TODO
+///
+/// TODO: Optimize: Recalculate only when GlobalTransforms changed.
+fn render_connections(
+    connections: Query<(&Connection, &Mesh2dHandle)>,
+    connectors: Query<&GlobalTransform>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (connection, mesh) in connections.iter() {
+        let connection: &Connection = connection;
+        let mesh: Option<&mut Mesh> = meshes.get_mut((*mesh).clone().0);
+
+        let out_transform = connectors
+            .get(connection.output_connector.entity())
+            .unwrap();
+        // Y=+-1 because the mesh is a unit square and the connection attaches above or below.
+        // Multiplying with the global transform puts it into the reference frame, i.e. window.
+        let from = out_transform.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+        let in_transform = connectors.get(connection.input_connector.entity()).unwrap();
+        let to = in_transform.mul_vec3(Vec3::new(0.0, -1.0, 0.0));
+
+        let line_mesh = VerticalSpline::new(vec![from, to], 1.0).gen_mesh();
+        if let Some(mesh) = mesh {
+            *mesh = line_mesh;
+        } else {
+            eprintln!("failed to update connection mesh.");
+        }
+    }
 }
 /// A system to scale up an input connector when dragging a connection over it.
 ///
@@ -945,6 +970,14 @@ struct Connection {
 enum ConnectionAttachment {
     Connector(Entity),
     Floating(Entity),
+}
+
+impl ConnectionAttachment {
+    fn entity(&self) -> Entity {
+        match self {
+            ConnectionAttachment::Connector(e) | ConnectionAttachment::Floating(e) => *e,
+        }
+    }
 }
 
 #[derive(Debug, Component, Copy, Clone, Eq, PartialEq)]
