@@ -19,6 +19,7 @@ use bevy::input::ElementState;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 use bevy::sprite::Mesh2dHandle;
+use bevy::utils::HashSet;
 use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
     RaycastSystem,
@@ -651,17 +652,36 @@ fn track_mouse(
 }
 
 /// A system to change states of [MyInteraction] components based on mouse input.
+///
+/// # Impl
+///
+/// Use `if let ...` instead of `.unwrap()` to silently ignore the unlikely condition that the
+/// freshly generated entity list contains bad references.
 fn apply_interactions(
     mut interactive: Query<(Entity, &mut MyInteraction)>,
     mut events: EventReader<MouseButtonInput>,
     rays: Query<&RayCastSource<MyRaycastSet>>,
 ) {
+    // Apply `Hovering` status.
     let hovering = rays
         .iter()
-        .filter_map(RayCastSource::intersect_list)
-        .flatten()
-        .map(|(target, _)| *target)
-        .next();
+        .filter_map(RayCastSource::intersect_top)
+        .map(|(target, _intersection)| target)
+        .collect::<HashSet<_>>();
+    for (e, mut interaction) in interactive.iter_mut() {
+        if *interaction == MyInteraction::Hover && !hovering.contains(&e) {
+            *interaction = MyInteraction::None;
+        }
+    }
+    for e in &hovering {
+        if let Ok((_entity, mut interaction)) = interactive.get_mut(*e) {
+            if *interaction == MyInteraction::None {
+                *interaction = MyInteraction::Hover;
+            }
+        }
+    }
+
+    // Apply `Pressed` status.
     for input in events.iter() {
         if let MouseButtonInput {
             button: MouseButton::Left,
@@ -670,16 +690,22 @@ fn apply_interactions(
         {
             match state {
                 ElementState::Pressed => {
-                    if let Some((_, mut interaction)) =
-                        hovering.and_then(|pressed| interactive.get_mut(pressed).ok())
-                    {
-                        *interaction = MyInteraction::Pressed;
+                    for pressed in &hovering {
+                        if let Ok((_entity, mut interaction)) = interactive.get_mut(*pressed) {
+                            *interaction = MyInteraction::Pressed;
+                        }
                     }
                 }
                 ElementState::Released => {
                     // Defensively release *all* clicked elements, not just the single one from here.
-                    for (_, mut interaction) in interactive.iter_mut() {
-                        *interaction = MyInteraction::None;
+                    for (e, mut interaction) in interactive.iter_mut() {
+                        if *interaction == MyInteraction::Pressed {
+                            *interaction = if hovering.contains(&e) {
+                                MyInteraction::Hover
+                            } else {
+                                MyInteraction::None
+                            };
+                        }
                     }
                 }
             }
@@ -897,7 +923,13 @@ enum ConnectionAttachment {
 
 #[derive(Debug, Component, Copy, Clone, Eq, PartialEq)]
 enum MyInteraction {
+    /// When no other variant applies.
     None,
+    /// When the cursor is over the entity (and no other entity is in front) but the left mouse
+    /// button is not pressed.
+    Hover,
+    /// Set when the left mouse button is pressed while the entity was hovered over. Is reset, when
+    /// the left mouse button is released -- i.e. not reset when the cursor moves is moved away.
     Pressed,
 }
 
