@@ -673,6 +673,30 @@ fn create_pipeline_element(
         let [r, g, b, a] = c.as_rgba_f32();
         (0.299 * r + 0.587 * g + 0.114 * b) * a
     }
+    fn create_io_pad<C: Component + Default>(
+        cmds: &mut Commands,
+        fraction: f32,
+        ty: f32,
+        material: Handle<ColorMaterial>,
+        mesh: Mesh2dHandle,
+    ) -> Entity {
+        let tx = -1.0 + 2.0 * fraction;
+        // Text is 0.5 layers in front. This is functional and must be in front text as well.
+        let tz = 0.75;
+        let id = cmds
+            .spawn_bundle(ColorMesh2dBundle {
+                transform: Transform::from_scale(Vec2::from(IO_PAD_SCALING).extend(1.0))
+                    .with_translation(Vec3::new(tx, ty, tz)),
+                material,
+                mesh,
+                ..Default::default()
+            })
+            .insert(C::default())
+            .insert(RayCastMesh::<MyRaycastSet>::default())
+            .insert(MyInteraction::default())
+            .id();
+        id
+    }
 
     // Create main (clickable) box.
     let element = cmds
@@ -702,60 +726,37 @@ fn create_pipeline_element(
     // Add inputs and outputs.
     let mut inputs = vec![];
     let mut outputs = vec![];
+    {
+        // Move the center (0,0) to the top/bottom edge (y=+-1) of the element.
+        let ty_top = -1.0 + IO_PAD_SCALING[1];
+        let ty_bottom = 1.0 - IO_PAD_SCALING[1];
+        let material = materials.add(ColorMaterial::from(text_color));
+        for i in 1..=effect.inputs() {
+            let fraction = i as f32 / (effect.inputs() + 1) as f32;
+            let id = create_io_pad::<InputConnector>(
+                cmds,
+                fraction,
+                ty_top,
+                material.clone(),
+                mesh.clone(),
+            );
+            inputs.push(id);
+        }
+        for i in 1..=effect.outputs() {
+            let fraction = i as f32 / (effect.outputs() + 1) as f32;
+            let id = create_io_pad::<OutputConnector>(
+                cmds,
+                fraction,
+                ty_bottom,
+                material.clone(),
+                mesh.clone(),
+            );
+            outputs.push(id);
+        }
+    }
     cmds.entity(element)
-        .with_children(|cmds| {
-            fn create_io_pad<C: Component + Default>(
-                cmds: &mut ChildBuilder,
-                fraction: f32,
-                ty: f32,
-                material: Handle<ColorMaterial>,
-                mesh: Mesh2dHandle,
-            ) -> Entity {
-                let tx = -1.0 + 2.0 * fraction;
-                // Text is 0.5 layers in front. This is functional and must be in front text as well.
-                let tz = 0.75;
-                let id = cmds
-                    .spawn_bundle(ColorMesh2dBundle {
-                        transform: Transform::from_scale(Vec2::from(IO_PAD_SCALING).extend(1.0))
-                            .with_translation(Vec3::new(tx, ty, tz)),
-                        material,
-                        mesh,
-                        ..Default::default()
-                    })
-                    .insert(C::default())
-                    .insert(RayCastMesh::<MyRaycastSet>::default())
-                    .insert(MyInteraction::default())
-                    .id();
-                id
-            }
-
-            // Move the center (0,0) to the top/bottom edge (y=+-1) of the element.
-            let ty_top = -1.0 + IO_PAD_SCALING[1];
-            let ty_bottom = 1.0 - IO_PAD_SCALING[1];
-            let material = materials.add(ColorMaterial::from(text_color));
-            for i in 1..=effect.inputs() {
-                let fraction = i as f32 / (effect.inputs() + 1) as f32;
-                let id = create_io_pad::<InputConnector>(
-                    cmds,
-                    fraction,
-                    ty_top,
-                    material.clone(),
-                    mesh.clone(),
-                );
-                inputs.push(id);
-            }
-            for i in 1..=effect.outputs() {
-                let fraction = i as f32 / (effect.outputs() + 1) as f32;
-                let id = create_io_pad::<OutputConnector>(
-                    cmds,
-                    fraction,
-                    ty_bottom,
-                    material.clone(),
-                    mesh.clone(),
-                );
-                outputs.push(id);
-            }
-        })
+        .push_children(&inputs)
+        .push_children(&outputs)
         .insert(InputConnectors(inputs))
         .insert(OutputConnectors(outputs));
 
