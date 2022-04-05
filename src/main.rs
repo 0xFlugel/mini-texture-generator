@@ -15,18 +15,15 @@
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
 mod connection_management;
+mod interaction;
 
-use bevy::input::mouse::MouseButtonInput;
-use bevy::input::ElementState;
+use crate::interaction::InteractionPlugin;
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
-use bevy::utils::HashSet;
-use bevy_mod_raycast::{
-    DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
-    RaycastSystem,
-};
+use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
+use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::mem::size_of;
 use std::ops::Deref;
 
@@ -63,23 +60,9 @@ const TEXTURE_SIZE: u32 = 16;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugin(DefaultRaycastingPlugin::<MyRaycastSet>::default())
-        .add_system_set_to_stage(
-            CoreStage::PreUpdate,
-            SystemSet::new()
-                .with_system(track_mouse)
-                .before(RaycastSystem::BuildRays),
-        )
-        .add_system_set_to_stage(
-            CoreStage::PreUpdate,
-            SystemSet::new()
-                .with_system(apply_interactions)
-                .after(RaycastSystem::UpdateRaycast),
-        )
-        .insert_resource(MousePosition::default())
+        .add_plugin(InteractionPlugin)
         .add_startup_system(setup)
         .add_system(create_element)
-        .add_system(dragging)
         .add_system(connection_management::start_connecting)
         .add_system(connection_management::render_connections)
         .add_system(connection_management::highlight_connection_acceptor)
@@ -245,37 +228,6 @@ fn create_element(
             font.as_ref(),
             &texts,
         );
-    }
-}
-
-/// Drag entities around their XY plane depending on cursor movement.
-#[allow(clippy::type_complexity)]
-fn dragging(
-    start: Query<(Entity, &MyInteraction, &Transform), (With<Draggable>, Without<Dragging>)>,
-    mut continue_: Query<(&Dragging, &mut Transform)>,
-    stop: Query<(Entity, &MyInteraction), With<Dragging>>,
-    mut cmds: Commands,
-    current_mouse_position: Res<MousePosition>,
-) {
-    start
-        .iter()
-        .filter(|(_, i, _)| **i == MyInteraction::Pressed)
-        .for_each(|(e, _, base)| {
-            cmds.entity(e).insert(Dragging {
-                start: *current_mouse_position,
-                base: *base,
-            });
-        });
-    stop.iter()
-        .filter(|(_, i)| **i != MyInteraction::Pressed)
-        .for_each(|(e, _)| {
-            cmds.entity(e).remove::<Dragging>();
-        });
-    for (Dragging { start, base }, mut transform) in continue_.iter_mut() {
-        let translate = Transform::from_translation(
-            (current_mouse_position.position - start.position).extend(0.0),
-        );
-        *transform = translate * *base;
     }
 }
 
@@ -510,86 +462,6 @@ fn create_text(
     .id()
 }
 
-/// A system to track the mouse location and make it available as a resource.
-fn track_mouse(
-    mut r: ResMut<MousePosition>,
-    mut events: EventReader<CursorMoved>,
-    mut rays: Query<&mut RayCastSource<MyRaycastSet>>,
-) {
-    match events.iter().last() {
-        None => r.just_moved = false,
-        Some(e) => {
-            r.position = e.position;
-            r.just_moved = true;
-            for mut ray in rays.iter_mut() {
-                ray.cast_method = RayCastMethod::Screenspace(r.position);
-            }
-        }
-    }
-}
-
-/// A system to change states of [MyInteraction] components based on mouse input.
-///
-/// # Impl
-///
-/// Use `if let ...` instead of `.unwrap()` to silently ignore the unlikely condition that the
-/// freshly generated entity list contains bad references.
-fn apply_interactions(
-    mut interactive: Query<(Entity, &mut MyInteraction)>,
-    mut events: EventReader<MouseButtonInput>,
-    rays: Query<&RayCastSource<MyRaycastSet>>,
-) {
-    // Apply `Hovering` status.
-    let hovering = rays
-        .iter()
-        .filter_map(RayCastSource::intersect_top)
-        .map(|(target, _intersection)| target)
-        .collect::<HashSet<_>>();
-    for (e, mut interaction) in interactive.iter_mut() {
-        if *interaction == MyInteraction::Hover && !hovering.contains(&e) {
-            *interaction = MyInteraction::None;
-        }
-    }
-    for e in &hovering {
-        if let Ok((_entity, mut interaction)) = interactive.get_mut(*e) {
-            if *interaction == MyInteraction::None {
-                *interaction = MyInteraction::Hover;
-            }
-        }
-    }
-
-    // Apply `Pressed` status.
-    for input in events.iter() {
-        if let MouseButtonInput {
-            button: MouseButton::Left,
-            state,
-        } = input
-        {
-            match state {
-                ElementState::Pressed => {
-                    for pressed in &hovering {
-                        if let Ok((_entity, mut interaction)) = interactive.get_mut(*pressed) {
-                            *interaction = MyInteraction::Pressed;
-                        }
-                    }
-                }
-                ElementState::Released => {
-                    // Defensively release *all* clicked elements, not just the single one from here.
-                    for (e, mut interaction) in interactive.iter_mut() {
-                        if *interaction == MyInteraction::Pressed {
-                            *interaction = if hovering.contains(&e) {
-                                MyInteraction::Hover
-                            } else {
-                                MyInteraction::None
-                            };
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
 ///
 /// # Parameter
@@ -603,22 +475,6 @@ fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
     let scale_y = (rect.top - rect.bottom) / 2.0;
     Transform::from_translation(Vec3::new(x, y, layer as _))
         .with_scale(Vec3::new(scale_x, scale_y, 1.0))
-}
-
-/// A marker for entities that can be dragged.
-#[derive(Component)]
-struct Draggable;
-/// State while dragging an entity.
-#[derive(Debug, Component)]
-struct Dragging {
-    start: MousePosition,
-    /// The entity transform at the start of the drag action.
-    ///
-    /// # Note
-    ///
-    /// Changes from other systems to a currently dragged entity will not persist as its transform
-    /// will be overwritten with the cached base value.
-    base: Transform,
 }
 
 #[derive(Debug, Copy, Clone, Component)]
@@ -706,34 +562,6 @@ impl Deref for SidebarElement {
         &self.0
     }
 }
-
-#[derive(Debug, Component, Copy, Clone, Eq, PartialEq)]
-enum MyInteraction {
-    /// When no other variant applies.
-    None,
-    /// When the cursor is over the entity (and no other entity is in front) but the left mouse
-    /// button is not pressed.
-    Hover,
-    /// Set when the left mouse button is pressed while the entity was hovered over. Is reset, when
-    /// the left mouse button is released -- i.e. not reset when the cursor moves is moved away.
-    Pressed,
-}
-
-impl Default for MyInteraction {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-/// A resource to track the mouse location.
-#[derive(Debug, Default, Copy, Clone)]
-struct MousePosition {
-    position: Vec2,
-    just_moved: bool,
-}
-
-/// A marker for ray-castable entities.
-struct MyRaycastSet;
 
 /// A bundle for creating a full pipeline element entity.
 #[derive(Bundle)]

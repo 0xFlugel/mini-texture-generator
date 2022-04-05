@@ -1,9 +1,9 @@
-use crate::{
-    Draggable, Dragging, Mesh2dHandle, MousePosition, MyInteraction, MyRaycastSet,
-    PrimitiveTopology, SidebarElement, HIGHLIGHT_SCALING,
-};
+use crate::interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
+use crate::{SidebarElement, HIGHLIGHT_SCALING};
 use bevy::ecs::query::QueryEntityError;
 use bevy::prelude::*;
+use bevy::render::mesh::PrimitiveTopology;
+use bevy::sprite::Mesh2dHandle;
 use bevy::utils::HashMap;
 use bevy_mod_raycast::RayCastMesh;
 
