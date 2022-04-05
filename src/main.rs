@@ -18,13 +18,14 @@ use bevy::ecs::query::QueryEntityError;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ElementState;
 use bevy::prelude::*;
-use bevy::render::render_resource::PrimitiveTopology;
+use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
 use bevy::utils::{HashMap, HashSet};
 use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastMethod, RayCastSource,
     RaycastSystem,
 };
+use std::mem::size_of;
 use std::ops::Deref;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
@@ -43,11 +44,15 @@ const TEXT_SCALING: [f32; 2] = [
 ];
 /// Scale factors of input and output connectors.
 ///
-/// The values are normalized to a unit square parent.
+/// The values are normalized to a unit square parent and are chosen to cause a square shape in the
+/// non-square parent transform.
 const IO_PAD_SCALING: [f32; 2] = [0.1, 0.2];
 
 /// The scaling factor for highlighting connector drop off points on hovering.
 const HIGHLIGHT_SCALING: f32 = 1.5;
+
+/// Number of pixels in each direction of the 2D texture.
+const TEXTURE_SIZE: u32 = 16;
 
 //TODO Add a system that removes pipeline elements that are dropped over the sidebar.
 //TODO Add a system that moves overlapping pipeline elements away from each other.
@@ -77,7 +82,68 @@ fn main() {
         .add_system(render_connections)
         .add_system(highlight_connection_acceptor)
         .add_system(finish_connection)
+        .add_system(update_texture)
         .run();
+}
+
+/// React to changes in connections and update the pipeline (i.e. texture generation function)
+/// accordingly.
+fn update_texture(
+    mut cmds: Commands,
+    mut mesh_assets: ResMut<Assets<Mesh>>,
+    mut material_assets: ResMut<Assets<ColorMaterial>>,
+    mut image_assets: ResMut<Assets<Image>>,
+    mut img: Local<Option<(Entity, Handle<Image>)>>,
+) {
+    let img = img.get_or_insert_with(|| {
+        let image = image_assets.add(Image::new(
+            Extent3d {
+                width: TEXTURE_SIZE,
+                height: TEXTURE_SIZE,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            std::iter::repeat(Color::GRAY.as_rgba_f32())
+                .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
+                .flatten()
+                .flat_map(f32::to_le_bytes)
+                .collect(),
+            TextureFormat::Rgba32Float,
+        ));
+        let entity = cmds
+            .spawn_bundle(ColorMesh2dBundle {
+                mesh: mesh_assets
+                    .add(Mesh::from(shape::Quad::new(Vec2::splat(2.0))))
+                    .into(),
+                material: material_assets.add(ColorMaterial {
+                    color: Color::WHITE,
+                    texture: Some(image.clone()),
+                }),
+                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 5.0))
+                    .with_scale(Vec3::new(200.0, 200.0, 1.0)),
+                ..Default::default()
+            })
+            .id();
+        (entity, image)
+    });
+    let image = image_assets.get_mut(img.1.clone()).unwrap();
+    let elem_size = size_of::<[f32; 4]>();
+    for x in 0..TEXTURE_SIZE {
+        for y in 0..TEXTURE_SIZE {
+            let offset = (y * TEXTURE_SIZE + x) as usize * elem_size;
+            let color = if ((x + y) % 2) == 0 {
+                Color::PURPLE
+            } else {
+                Color::BLACK
+            };
+            let data = color
+                .as_rgba_f32()
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect::<Vec<_>>();
+            image.data[offset..offset + elem_size].copy_from_slice(&data);
+        }
+    }
 }
 
 /// A system to start a [Connection] from an output connector to another pipeline element's input
