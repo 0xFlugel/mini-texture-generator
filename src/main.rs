@@ -16,6 +16,7 @@
 
 mod connection_management;
 mod interaction;
+mod layout;
 
 use crate::interaction::InteractionPlugin;
 use bevy::prelude::*;
