@@ -150,7 +150,7 @@ fn update_texture(
 
 /// A system to create new pipeline elements by copying the clicked sidebar element and initializing
 /// a dragging state.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn create_element(
     mut cmds: Commands,
     changed_interactions: Query<(Entity, &MyInteraction), Changed<MyInteraction>>,
@@ -367,6 +367,7 @@ fn setup(
 /// # Note
 ///
 /// The element is interactive but not tagged as a sidebar element or a active pipeline part.
+#[allow(clippy::too_many_arguments)]
 fn create_pipeline_element(
     effect: EffectType,
     cmds: &mut Commands,

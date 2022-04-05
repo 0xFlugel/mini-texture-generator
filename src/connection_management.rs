@@ -33,6 +33,8 @@ pub(crate) fn start_connecting(
         .filter(|(_, i, _, _)| i == &&MyInteraction::Pressed)
     {
         let connector: Entity = connector;
+        // IntelliJ-Rust wrongly remarks an error without `from`.
+        #[allow(clippy::useless_conversion)]
         let translation = Vec3::from(transform.translation);
         let mut connections: Mut<OutputConnector> = connections;
 
@@ -128,6 +130,7 @@ pub(crate) fn render_connections(
 ///
 /// This gives feedback to the user that this interaction is good and also reduces the chances of
 /// slightly missing an accepting drop-off point.
+#[allow(clippy::type_complexity)]
 pub(crate) fn highlight_connection_acceptor(
     inputs: Query<&Parent, With<InputConnector>>,
     outputs: Query<&Parent, With<OutputConnector>>,
@@ -237,7 +240,7 @@ pub(crate) fn finish_connection(
                                 #[rustfmt::skip]
                                     delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs);
                             }
-                            *&mut inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
+                            inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
                             connections.get_mut(*connection).unwrap().input_connector =
                                 ConnectionAttachment::Connector(*drop_connector);
                         }
@@ -259,7 +262,7 @@ pub(crate) fn finish_connection(
 
 /// Properly despawn a connection, incl. the floating connector, and remove the references from IO
 /// pads to it.
-pub(crate) fn delete_connection<'a>(
+fn delete_connection<'a>(
     connection: Entity,
     cmds: &'a mut Commands,
     connections: &Query<&mut Connection>,
