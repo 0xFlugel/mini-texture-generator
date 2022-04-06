@@ -2,6 +2,7 @@
 //! for the elements that are already used and usable in any 2D setup.
 
 use bevy::prelude::*;
+use bevy::text::Text2dSize;
 use bevy::utils::HashMap;
 
 /// A plugin for automatically arrange entities in containers.
@@ -11,11 +12,26 @@ pub(crate) struct LayoutPlugin;
 
 impl Plugin for LayoutPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(LayoutPlugin::reflow_containers);
+        app.add_system_set(
+            SystemSet::new()
+                .with_system(LayoutPlugin::update_text_size)
+                .before("reflow"),
+        )
+        .add_system(LayoutPlugin::reflow_containers.label("reflow"));
     }
 }
 
 impl LayoutPlugin {
+    /// Set the UiSize components to the calculated text sizes.
+    ///
+    /// This is necessary because the entity size is not trivial to calculate as it is dependent on
+    /// font, ligatures, font size, transform, etc.
+    fn update_text_size(mut texts: Query<(&Text2dSize, &mut UiSize), Changed<Text2dSize>>) {
+        for (updated, mut size) in texts.iter_mut() {
+            size.0 = updated.size;
+        }
+    }
+
     /// Resize parents to fit all children and reposition children to be inside the parent and not
     /// overlap each other.
     ///
