@@ -19,7 +19,7 @@ mod interaction;
 mod layout;
 
 use crate::interaction::InteractionPlugin;
-use crate::layout::LayoutPlugin;
+use crate::layout::{LayoutChildren, LayoutContainerBundle, LayoutPlugin, UiSize};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
@@ -255,6 +255,7 @@ fn setup(
 
     cmds.spawn_bundle(OrthographicCameraBundle::new_2d())
         .insert(RayCastSource::<MyRaycastSet>::new());
+    //TODO remove?
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
     // Create sidebar
@@ -290,6 +291,7 @@ fn setup(
         Color::YELLOW_GREEN,
     ];
 
+    let mut children = vec![];
     for (i, effect) in EffectType::all().iter().enumerate() {
         let num = (3 * n + 1) as f32;
         let offset = (3 * i + 1) as f32;
@@ -314,7 +316,12 @@ fn setup(
         );
         cmds.entity(child).insert(SidebarElement(*effect));
         cmds.entity(sidebar).add_child(child);
+        children.push(child);
     }
+    cmds.entity(sidebar).insert_bundle(LayoutContainerBundle {
+        children: LayoutChildren(children),
+        ..Default::default()
+    });
 }
 
 /// Create new new entity that is a pipeline element.
@@ -374,6 +381,7 @@ fn create_pipeline_element(
         })
         .insert(MyInteraction::default())
         .insert(RayCastMesh::<MyRaycastSet>::default())
+        .insert(UiSize(Size::new(200.0, 100.0)))
         .id();
     let text_color = {
         let background = materials
@@ -387,7 +395,6 @@ fn create_pipeline_element(
 
     // Add label.
     let label = create_text(cmds, label, text_color, transform, &font);
-    cmds.entity(element).add_child(label);
 
     // Add inputs and outputs.
     let mut inputs = vec![];
@@ -462,6 +469,8 @@ fn create_text(
         },
         ..Default::default()
     })
+    // Will be set by the layout system.
+    .insert(UiSize(Size::default()))
     .id()
 }
 
