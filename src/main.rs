@@ -19,6 +19,7 @@ mod interaction;
 mod layout;
 
 use crate::interaction::InteractionPlugin;
+use crate::layout::LayoutPlugin;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
@@ -62,6 +63,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(InteractionPlugin)
+        .add_plugin(LayoutPlugin)
         .add_startup_system(setup)
         .add_system(create_element)
         .add_system(connection_management::start_connecting)

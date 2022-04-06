@@ -7,7 +7,7 @@ use bevy::utils::HashMap;
 /// A plugin for automatically arrange entities in containers.
 ///
 /// See [LayoutContainerBundle] and [UiSize] for the necessary components.
-struct LayoutPlugin;
+pub(crate) struct LayoutPlugin;
 
 impl Plugin for LayoutPlugin {
     fn build(&self, app: &mut App) {
