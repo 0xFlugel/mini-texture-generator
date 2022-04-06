@@ -127,6 +127,29 @@ impl LayoutPlugin {
         /// Recursively set the positions of the entity with a given offset.
         fn set_position(
             entity: Entity,
+            offset: Vec3,
+            containers: &Query<(
+                Entity,
+                &LayoutChildren,
+                Option<&Margin>,
+                Option<&Padding>,
+                Option<&Spacing>,
+            )>,
+            sizes: &Query<&mut UiSize>,
+            transforms: &mut Query<&mut Transform>,
+            cache: &Local<HashMap<Entity, (UiSize, bool)>>,
+        ) {
+            // Set position
+            if let Ok(mut t) = transforms.get_mut(entity) {
+                t.translation = offset;
+            } else {
+                eprintln!("failed to reposition {:?}. No Transform component.", entity)
+            }
+            set_childrens_positions(entity, offset, containers, sizes, transforms, cache);
+        }
+        /// Recursively set the positions of the children of this entity.
+        fn set_childrens_positions(
+            parent: Entity,
             mut offset: Vec3,
             containers: &Query<(
                 Entity,
@@ -136,18 +159,11 @@ impl LayoutPlugin {
                 Option<&Spacing>,
             )>,
             sizes: &Query<&mut UiSize>,
-            mut transforms: &mut Query<&mut Transform>,
+            transforms: &mut Query<&mut Transform>,
             cache: &Local<HashMap<Entity, (UiSize, bool)>>,
         ) {
-            // Set position
-            if let Ok(mut t) = transforms.get_mut(entity) {
-                t.translation = offset;
-            } else {
-                eprintln!("failed to reposition {:?}. No Transform component.", entity)
-            }
-            // Recursively set child positions.
             if let Some((_, LayoutChildren(children), margin, padding, spacing)) =
-                containers.get(entity).ok()
+                containers.get(parent).ok()
             {
                 let margin: Rect<LayoutUnit> = margin.map(|Margin(rect)| *rect).unwrap_or_default();
                 let padding: Rect<LayoutUnit> =
@@ -158,7 +174,7 @@ impl LayoutPlugin {
                 offset.y += margin.top + padding.top;
 
                 for child in children {
-                    set_position(*child, offset, &containers, &sizes, &mut transforms, &cache);
+                    set_position(*child, offset, containers, sizes, transforms, cache);
                     let size = get_size(*child, &sizes, &cache).0;
                     offset.x += size.width;
                     offset.y += size.height + spacing;
@@ -184,7 +200,7 @@ impl LayoutPlugin {
         for container in containers.iter() {
             let this = container.0;
             if is_root(&this, &cache) {
-                set_position(
+                set_childrens_positions(
                     this,
                     Vec3::new(0.0, 0.0, 0.0),
                     &containers,
