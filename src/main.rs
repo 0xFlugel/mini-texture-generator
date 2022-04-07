@@ -297,10 +297,10 @@ fn setup(
         let offset = (3 * i + 1) as f32;
         let transform = transform_from_rect(
             Rect {
-                top: 1.0 - 2.0 * (offset / num),
-                bottom: 1.0 - 2.0 * ((offset + 2.0) / num),
-                left: -0.8,
-                right: 0.8,
+                top: (1.0 - 2.0 * (offset / num)) * y_scale,
+                bottom: (1.0 - 2.0 * ((offset + 2.0) / num)) * y_scale,
+                left: -0.8 * x_scale,
+                right: 0.8 * x_scale,
             },
             1,
         );
@@ -394,7 +394,7 @@ fn create_pipeline_element(
     };
 
     // Add label.
-    let label = create_text(cmds, label, text_color, transform, &font);
+    let label = create_text(cmds, label, text_color, &font);
 
     // Add inputs and outputs.
     let mut inputs = vec![];
@@ -428,6 +428,10 @@ fn create_pipeline_element(
         }
     }
     cmds.entity(element)
+        .insert_bundle(LayoutContainerBundle {
+            children: LayoutChildren(vec![label]),
+            ..Default::default()
+        })
         .push_children(&inputs)
         .push_children(&outputs)
         .insert(InputConnectors(inputs))
@@ -440,7 +444,6 @@ fn create_text(
     cmds: &mut Commands,
     label: &str,
     color: Color,
-    transform: Transform,
     font: &Handle<Font>,
 ) -> Entity {
     let sections = label
@@ -455,8 +458,7 @@ fn create_text(
         })
         .collect();
     cmds.spawn_bundle(Text2dBundle {
-        transform: transform
-            .with_scale(Vec2::from(TEXT_SCALING).extend(1.0))
+        transform: Transform::from_scale(Vec2::from(TEXT_SCALING).extend(1.0))
             // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
             // front (if something is placed on that layer) while being bit-exact.
             .with_translation(Vec3::new(0.0, 0.0, 0.5)),
