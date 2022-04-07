@@ -1,6 +1,7 @@
 //! An implemention of a basic layouting engine, similar to bevy UI but more concise and practical
 //! for the elements that are already used and usable in any 2D setup.
 
+use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
 use bevy::text::Text2dSize;
 use bevy::utils::HashMap;
@@ -91,13 +92,17 @@ impl LayoutPlugin {
                 + margin.right
                 + padding.left
                 + padding.right
-                + child_sizes.iter().map(|s| s.0.width).sum::<LayoutUnit>()
-                + num_spaces * spacing;
+                + child_sizes
+                    .iter()
+                    .map(|s| s.0.width)
+                    .max_by(|a, b| a.partial_cmp(b).expect("Size is not an ordinal number."))
+                    .unwrap_or_default();
             let height = margin.top
                 + margin.bottom
                 + padding.top
                 + padding.bottom
-                + child_sizes.iter().map(|s| s.0.height).sum::<LayoutUnit>();
+                + child_sizes.iter().map(|s| s.0.height).sum::<LayoutUnit>()
+                + num_spaces * spacing;
             let size = UiSize(Size::new(width, height));
             let is_root = true;
             cache.insert(container, (size.clone(), is_root));
@@ -125,9 +130,9 @@ impl LayoutPlugin {
             cache.get(e).unwrap().1
         }
         /// Recursively set the positions of the entity with a given offset.
-        fn set_position(
+        fn set_transforms(
             entity: Entity,
-            offset: Vec3,
+            offset: Vec2,
             containers: &Query<(
                 Entity,
                 &LayoutChildren,
@@ -141,16 +146,18 @@ impl LayoutPlugin {
         ) {
             // Set position
             if let Ok(mut t) = transforms.get_mut(entity) {
-                t.translation = offset;
+                // The `offset` is given for the upper left corner while the elements are centered.
+                let center_offset = t.scale.xy() * Vec2::splat(0.5);
+                t.translation = (offset + center_offset).extend(t.translation.z);
             } else {
-                eprintln!("failed to reposition {:?}. No Transform component.", entity)
+                eprintln!("Failed to reposition {:?}. No Transform component.", entity)
             }
-            set_childrens_positions(entity, offset, containers, sizes, transforms, cache);
+            set_childrens_transforms(entity, offset, containers, sizes, transforms, cache);
         }
         /// Recursively set the positions of the children of this entity.
-        fn set_childrens_positions(
+        fn set_childrens_transforms(
             parent: Entity,
-            mut offset: Vec3,
+            mut offset: Vec2,
             containers: &Query<(
                 Entity,
                 &LayoutChildren,
@@ -173,10 +180,13 @@ impl LayoutPlugin {
                 offset.x += margin.left + padding.left;
                 offset.y += margin.top + padding.top;
 
+                if let Ok(mut t) = transforms.get_mut(parent) {
+                    let size = get_size(parent, &sizes, &cache).0;
+                    t.scale = Vec3::new(size.width, size.height, 1.0);
+                }
                 for child in children {
-                    set_position(*child, offset, containers, sizes, transforms, cache);
+                    set_transforms(*child, offset, containers, sizes, transforms, cache);
                     let size = get_size(*child, &sizes, &cache).0;
-                    offset.x += size.width;
                     offset.y += size.height + spacing;
                 }
             }
@@ -200,9 +210,9 @@ impl LayoutPlugin {
         for container in containers.iter() {
             let this = container.0;
             if is_root(&this, &cache) {
-                set_childrens_positions(
+                set_childrens_transforms(
                     this,
-                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec2::new(0.0, 0.0),
                     &containers,
                     &sizes,
                     &mut transforms,
