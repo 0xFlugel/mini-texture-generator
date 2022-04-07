@@ -2,6 +2,7 @@
 //! for the elements that are already used and usable in any 2D setup.
 
 use bevy::math::Vec3Swizzles;
+use crate::TEXT_SCALING;
 use bevy::prelude::*;
 use bevy::text::Text2dSize;
 use bevy::utils::HashMap;
@@ -29,7 +30,14 @@ impl LayoutPlugin {
     /// font, ligatures, font size, transform, etc.
     fn update_text_size(mut texts: Query<(&Text2dSize, &mut UiSize), Changed<Text2dSize>>) {
         for (updated, mut size) in texts.iter_mut() {
-            size.0 = updated.size;
+            let updated = updated.size;
+            // Ignore (0,0) sizes when not yet calculated.
+            if updated.width > 1.0 && updated.height > 1.0 {
+                size.0 = Size::new(
+                    500.0 * TEXT_SCALING[0], //updated.width * TEXT_SCALING[0],
+                    50.0 * TEXT_SCALING[1], //updated.height * TEXT_SCALING[1],
+                );
+            }
         }
     }
 
