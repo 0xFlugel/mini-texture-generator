@@ -375,7 +375,7 @@ fn create_pipeline_element(
         mesh: Mesh2dHandle,
         parent_size: ElementSize,
     ) -> Entity {
-        let tx = (-1.0 + 2.0 * tx_fraction) * parent_size.0.width;
+        let tx = (-1.0 + 2.0 * tx_fraction) * parent_size.0.width / 2.0;
         // Text is 0.5 layers in front. This is functional and must be in front text as well.
         let tz = 0.75;
         let id = cmds
