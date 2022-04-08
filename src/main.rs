@@ -24,6 +24,7 @@ use bevy::sprite::Mesh2dHandle;
 use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::ops::Deref;
 
@@ -41,11 +42,11 @@ const TEXT_SCALING: [f32; 2] = [
     1.0 / (2.0 * FONT_SIZE),
     1.0 / (2.0 * (2.0 / 3.0) * FONT_SIZE),
 ];
-/// Scale factors of input and output connectors.
+/// Scale factor of input and output connectors.
 ///
-/// The values are normalized to a unit square parent and are chosen to cause a square shape in the
-/// non-square parent transform.
-const IO_PAD_SCALING: [f32; 2] = [0.1, 0.2];
+/// The values are normalized to a unit square parent to be scaled relative to the height of a
+/// line in  the sidebar.
+const IO_PAD_SIZE: f32 = 0.5;
 
 /// The scaling factor for highlighting connector drop off points on hovering.
 const HIGHLIGHT_SCALING: f32 = 1.5;
@@ -147,8 +148,10 @@ fn create_element(
     mouse_position: Res<MousePosition>,
     windows: Res<Windows>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    meshes: Res<HashMap<MyMeshes, (Mesh2dHandle, Size)>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
+    io_pad_size: Res<IoPadSize>,
 ) {
     /// Copy the relevent components directly from the existing template and create a pipeline
     /// element *that is currently being dragged*. The user does not have to click again.
@@ -164,8 +167,10 @@ fn create_element(
         position: Vec3,
         mouse_position: MousePosition,
         materials: &mut Assets<ColorMaterial>,
+        meshes: &HashMap<MyMeshes, (Mesh2dHandle, Size)>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
+        io_pad_size: &Res<IoPadSize>,
     ) {
         let (SidebarElement(effect), global_transform, mesh, material, children) = data;
         let transform = Transform::from(*global_transform).with_translation(position);
@@ -189,15 +194,18 @@ fn create_element(
                 eprintln!("Failed to find the text on the template element.");
                 String::new()
             });
+        let (io_pad_mesh, size) = meshes.get(&MyMeshes::IoConnector).unwrap().clone();
         let new = create_pipeline_element(
             *effect,
             cmds,
             &label,
             (*material).clone(),
-            mesh.clone(),
             materials,
             transform,
             (*font).clone(),
+            (io_pad_mesh, ***io_pad_size),
+            mesh.clone(),
+            Vec2::new(size.width, size.height),
         );
         cmds.entity(new)
             .insert(*effect)
@@ -225,8 +233,10 @@ fn create_element(
             position,
             *mouse_position,
             materials.as_mut(),
+            meshes.as_ref(),
             font.as_ref(),
             &texts,
+            &io_pad_size,
         );
     }
 }
@@ -247,34 +257,31 @@ fn setup(
     cmds.insert_resource(font.clone());
 
     let window = windows.get_primary().unwrap();
-    let x_scale = window.width() / 2.0;
-    let y_scale = window.height() / 2.0;
 
     cmds.spawn_bundle(OrthographicCameraBundle::new_2d())
         .insert(RayCastSource::<MyRaycastSet>::new());
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
     // Create sidebar
-    let normalized_square =
-        Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(2.0)))));
+    let win_width = window.width();
+    let win_height = window.height();
+    let sidebar_width = win_width * SIDEBAR_WIDTH;
     let sidebar = cmds
         .spawn_bundle(ColorMesh2dBundle {
-            transform: transform_from_rect(
-                Rect {
-                    left: -x_scale,
-                    right: (-1.0 + SIDEBAR_WIDTH) * x_scale,
-                    top: y_scale,
-                    bottom: -y_scale,
-                },
-                0,
-            ),
-            mesh: normalized_square.clone(),
+            transform: Transform::from_translation(Vec3::new(
+                -win_width / 2.0 + sidebar_width / 2.0,
+                0.0,
+                0.0,
+            )),
+            mesh: Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(
+                sidebar_width,
+                win_height,
+            ))))),
             material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
             ..Default::default()
         })
         .insert(Sidebar)
         .id();
-    let n = EffectType::all().len();
 
     let colors = [
         Color::AQUAMARINE,
@@ -287,31 +294,61 @@ fn setup(
         Color::YELLOW_GREEN,
     ];
 
+    // The amount of "lines" in the sidebar. One line space between effects + 2 lines per effect for
+    // IO connectors and Label + one line per parameter field.
+    // +1 offset to have them vertically centered instead of touching the border above or below.
+    let num_lines = EffectType::all()
+        .iter()
+        .map(|e| e.controls().len() + 3)
+        .sum::<usize>() as f32
+        + 1.0;
+    let line_height = win_height / num_lines;
+
+    let mut mesh_cache = HashMap::new();
+    let io_pad_size = IO_PAD_SIZE * line_height;
+
+    let io_pad_mesh =
+        Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(io_pad_size)))));
+    mesh_cache.insert(
+        MyMeshes::IoConnector,
+        (io_pad_mesh.clone(), Size::new(io_pad_size, io_pad_size)),
+    );
+
+    let mut line_offset = 1;
     for (i, effect) in EffectType::all().iter().enumerate() {
-        let num = (3 * n + 1) as f32;
-        let offset = (3 * i + 1) as f32;
-        let transform = transform_from_rect(
-            Rect {
-                top: 1.0 - 2.0 * (offset / num),
-                bottom: 1.0 - 2.0 * ((offset + 2.0) / num),
-                left: -0.8,
-                right: 0.8,
-            },
-            1,
+        let this_lines = effect.controls().len() + 2;
+        let offset = line_offset as f32;
+        let y_from = win_height * (0.5 - offset / num_lines);
+        let y_to = win_height * (0.5 - (offset + this_lines as f32) / num_lines);
+        let size = Vec2::new(0.6 * sidebar_width, (y_to - y_from).abs());
+        let transform = Transform::from_translation(Vec3::new(0.0, (y_from + y_to) / 2.0, 1.0));
+
+        let element_mesh = Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(size))));
+        mesh_cache.insert(
+            MyMeshes::from(effect),
+            (element_mesh.clone(), Size::new(size.x, size.y)),
         );
+
         let child = create_pipeline_element(
             *effect,
             &mut cmds,
             effect.name(),
             materials.add(ColorMaterial::from(colors[i])),
-            normalized_square.clone(),
             materials.as_mut(),
             transform,
             font.clone(),
+            (io_pad_mesh.clone(), io_pad_size),
+            element_mesh,
+            size,
         );
         cmds.entity(child).insert(SidebarElement(*effect));
         cmds.entity(sidebar).add_child(child);
+
+        line_offset += this_lines + 1;
     }
+
+    cmds.insert_resource(mesh_cache);
+    cmds.insert_resource(IoPadSize(io_pad_size));
 }
 
 /// Create new new entity that is a pipeline element.
@@ -325,10 +362,12 @@ fn create_pipeline_element(
     cmds: &mut Commands,
     label: &str,
     material: Handle<ColorMaterial>,
-    mesh: Mesh2dHandle,
     materials: &mut Assets<ColorMaterial>,
     transform: Transform,
     font: Handle<Font>,
+    (io_pad_mesh, io_pad_size): (Mesh2dHandle, f32),
+    element_mesh: Mesh2dHandle,
+    size: Vec2,
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
     fn gray(c: Color) -> f32 {
@@ -336,20 +375,21 @@ fn create_pipeline_element(
         let [r, g, b, a] = c.as_rgba_f32();
         (0.299 * r + 0.587 * g + 0.114 * b) * a
     }
+    /// Create an io pad positioned and scaled on a unit square.
     fn create_io_pad<C: Component + Default>(
         cmds: &mut Commands,
-        fraction: f32,
+        tx_fraction: f32,
         ty: f32,
         material: Handle<ColorMaterial>,
         mesh: Mesh2dHandle,
+        parent_size: Vec2,
     ) -> Entity {
-        let tx = -1.0 + 2.0 * fraction;
+        let tx = (-1.0 + 2.0 * tx_fraction) * parent_size.x;
         // Text is 0.5 layers in front. This is functional and must be in front text as well.
         let tz = 0.75;
         let id = cmds
             .spawn_bundle(ColorMesh2dBundle {
-                transform: Transform::from_scale(Vec2::from(IO_PAD_SCALING).extend(1.0))
-                    .with_translation(Vec3::new(tx, ty, tz)),
+                transform: Transform::from_translation(Vec3::new(tx, ty, tz)),
                 material,
                 mesh,
                 ..Default::default()
@@ -365,7 +405,7 @@ fn create_pipeline_element(
     let element = cmds
         .spawn_bundle(ColorMesh2dBundle {
             transform,
-            mesh: mesh.clone(),
+            mesh: element_mesh,
             material: material.clone(),
             ..Default::default()
         })
@@ -391,8 +431,8 @@ fn create_pipeline_element(
     let mut outputs = vec![];
     {
         // Move the center (0,0) to the top/bottom edge (y=+-1) of the element.
-        let ty_top = -1.0 + IO_PAD_SCALING[1];
-        let ty_bottom = 1.0 - IO_PAD_SCALING[1];
+        let ty_top = -size.y / 2.0 + io_pad_size;
+        let ty_bottom = size.y / 2.0 - io_pad_size;
         let material = materials.add(ColorMaterial::from(text_color));
         for i in 1..=effect.inputs() {
             let fraction = i as f32 / (effect.inputs() + 1) as f32;
@@ -401,7 +441,8 @@ fn create_pipeline_element(
                 fraction,
                 ty_top,
                 material.clone(),
-                mesh.clone(),
+                io_pad_mesh.clone(),
+                size,
             );
             inputs.push(id);
         }
@@ -412,7 +453,8 @@ fn create_pipeline_element(
                 fraction,
                 ty_bottom,
                 material.clone(),
-                mesh.clone(),
+                io_pad_mesh.clone(),
+                size,
             );
             outputs.push(id);
         }
@@ -462,22 +504,7 @@ fn create_text(
     .id()
 }
 
-/// Convert a rect in the normalized 2D space (-1..1 on X and Y axes) to a transform.
-///
-/// # Parameter
-///
-/// `layer` is the layer the object is residing on in the 2D scene. Make sure to put the children in
-/// front of the parents...
-fn transform_from_rect(rect: Rect<f32>, layer: usize) -> Transform {
-    let x = (rect.left + rect.right) / 2.0;
-    let y = (rect.top + rect.bottom) / 2.0;
-    let scale_x = (rect.right - rect.left) / 2.0;
-    let scale_y = (rect.top - rect.bottom) / 2.0;
-    Transform::from_translation(Vec3::new(x, y, layer as _))
-        .with_scale(Vec3::new(scale_x, scale_y, 1.0))
-}
-
-#[derive(Debug, Copy, Clone, Component)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Component)]
 enum EffectType {
     Rgba,
     Hsva,
@@ -487,6 +514,7 @@ enum EffectType {
     Rotate,
     Offset,
     Scale,
+    //TODO add, mul, div, functions (all on values instead of positions).
 }
 
 impl EffectType {
@@ -545,6 +573,45 @@ impl EffectType {
             EffectType::Scale => 1,
         }
     }
+
+    /// The names of internal parameters of each variant.
+    fn controls(&self) -> &[&'static str] {
+        match self {
+            EffectType::Rgba => &[],
+            EffectType::Hsva => &[],
+            EffectType::Gray => &[],
+            EffectType::Constant => &["Value"],
+            EffectType::Identity => &[],
+            EffectType::Rotate => &["Angle"],
+            EffectType::Offset => &["X", "Y"],
+            EffectType::Scale => &["X", "Y"],
+        }
+    }
+}
+
+/// IDs for the Mesh2dHandle cache resource.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+enum MyMeshes {
+    EffectType(EffectType),
+    IoConnector,
+}
+
+impl From<&EffectType> for MyMeshes {
+    fn from(e: &EffectType) -> Self {
+        Self::EffectType(*e)
+    }
+}
+
+/// A resource, specifying the pixel size of the squares that are used as connectors.
+#[derive(Debug, Copy, Clone)]
+struct IoPadSize(f32);
+
+impl Deref for IoPadSize {
+    type Target = f32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// A marker for being a template in the sidebar, instead of an interactive pipeline element.
@@ -577,108 +644,4 @@ struct PipelineElementBundle {
     global_transform: GlobalTransform,
     visibility: Visibility,
     comp_vis: ComputedVisibility,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn transform_from_rect_nop() {
-        let rect = Rect {
-            top: 1.0,
-            bottom: -1.0,
-            left: -1.0,
-            right: 1.0,
-        };
-        let result = dbg!(transform_from_rect(rect, 0));
-        let expect = dbg!(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))
-            .with_scale(Vec3::new(1.0, 1.0, 1.0)));
-        let eps = 1e-6;
-        assert!((result.translation.x - expect.translation.x).abs() < eps);
-        assert!((result.translation.y - expect.translation.y).abs() < eps);
-        assert!((result.translation.z - expect.translation.z).abs() < eps);
-        assert!((result.scale.x - expect.scale.x).abs() < eps);
-        assert!((result.scale.y - expect.scale.y).abs() < eps);
-        assert!((result.scale.z - expect.scale.z).abs() < eps);
-    }
-
-    #[test]
-    fn transform_from_rect_bottom_right_quadrant() {
-        let rect = Rect {
-            top: 0.0,
-            bottom: -1.0,
-            left: 0.0,
-            right: 1.0,
-        };
-        let result = dbg!(transform_from_rect(rect, 0));
-        let expect = dbg!(Transform::from_translation(Vec3::new(0.5, -0.5, 0.0))
-            .with_scale(Vec3::new(0.5, 0.5, 1.0)));
-        let eps = 1e-6;
-        assert!((result.translation.x - expect.translation.x).abs() < eps);
-        assert!((result.translation.y - expect.translation.y).abs() < eps);
-        assert!((result.translation.z - expect.translation.z).abs() < eps);
-        assert!((result.scale.x - expect.scale.x).abs() < eps);
-        assert!((result.scale.y - expect.scale.y).abs() < eps);
-        assert!((result.scale.z - expect.scale.z).abs() < eps);
-    }
-
-    #[test]
-    fn transform_from_rect_bottom_half() {
-        let rect = Rect {
-            top: 0.0,
-            bottom: -1.0,
-            left: -1.0,
-            right: 1.0,
-        };
-        let result = dbg!(transform_from_rect(rect, 0));
-        let expect = dbg!(Transform::from_translation(Vec3::new(0.0, -0.5, 0.0))
-            .with_scale(Vec3::new(1.0, 0.5, 1.0)));
-        let eps = 1e-6;
-        assert!((result.translation.x - expect.translation.x).abs() < eps);
-        assert!((result.translation.y - expect.translation.y).abs() < eps);
-        assert!((result.translation.z - expect.translation.z).abs() < eps);
-        assert!((result.scale.x - expect.scale.x).abs() < eps);
-        assert!((result.scale.y - expect.scale.y).abs() < eps);
-        assert!((result.scale.z - expect.scale.z).abs() < eps);
-    }
-
-    #[test]
-    fn transform_from_rect_bigger() {
-        let rect = Rect {
-            top: 3.0,
-            bottom: -2.0,
-            left: -3.0,
-            right: 2.0,
-        };
-        let result = dbg!(transform_from_rect(rect, 0));
-        let expect = dbg!(Transform::from_translation(Vec3::new(-0.5, 0.5, 0.0))
-            .with_scale(Vec3::new(2.5, 2.5, 1.0)));
-        let eps = 1e-6;
-        assert!((result.translation.x - expect.translation.x).abs() < eps);
-        assert!((result.translation.y - expect.translation.y).abs() < eps);
-        assert!((result.translation.z - expect.translation.z).abs() < eps);
-        assert!((result.scale.x - expect.scale.x).abs() < eps);
-        assert!((result.scale.y - expect.scale.y).abs() < eps);
-        assert!((result.scale.z - expect.scale.z).abs() < eps);
-    }
-
-    #[test]
-    fn transform_from_rect_layers() {
-        let rect = Rect {
-            top: 1.0,
-            bottom: -1.0,
-            left: -1.0,
-            right: 1.0,
-        };
-        let result = transform_from_rect(rect, 1);
-        let expect = Transform::from_translation(Vec3::new(0.0, 0.0, 1.0));
-        let eps = 1e-6;
-        assert!((dbg!(result).translation.x - dbg!(expect).translation.x).abs() < eps);
-        assert!((result.translation.y - expect.translation.y).abs() < eps);
-        assert!((result.translation.z - expect.translation.z).abs() < eps);
-        assert!((result.scale.x - expect.scale.x).abs() < eps);
-        assert!((result.scale.y - expect.scale.y).abs() < eps);
-        assert!((result.scale.z - expect.scale.z).abs() < eps);
-    }
 }
