@@ -8,10 +8,9 @@
 //!
 //! The connectors are start and end points for [Connection]s which connect exactly one input to one
 //! output connector. A connection has a [Color] that is defined by its starting point, the output
-//! connector id. Thus, all connections that transmit the same value have the same color.
+//! connector id. Thus, all connections that transmit the same value have the same color. TODO
 //!
-//! A texture is generated based on a consuming [Effect], i.e. one that has no output. It works by
-//! recursively resolving its the values for all pixel positions per input connector.
+//! A texture is generated based on a consuming [Effect], i.e. one that has no output.
 //! [InputConnector]s without a [Connection] will assume a value of zero.
 
 mod connection_management;
@@ -36,12 +35,7 @@ const SIDEBAR_WIDTH: f32 = 0.25;
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
 const FONT_FILENAME: &str = "Roboto-Regular.ttf";
 /// Text size, high enough to have a acceptable render quality.
-const FONT_SIZE: f32 = 50.0;
-/// This is set to fit all text into the pipeline elements & scales automatically with [FONT_SIZE].
-const TEXT_SCALING: [f32; 2] = [
-    1.0 / (2.0 * FONT_SIZE),
-    1.0 / (2.0 * (2.0 / 3.0) * FONT_SIZE),
-];
+const FONT_SIZE: f32 = 15.0;
 /// Scale factor of input and output connectors.
 ///
 /// The values are normalized to a unit square parent to be scaled relative to the height of a
@@ -394,13 +388,6 @@ fn create_pipeline_element(
         id
     }
 
-    let element_rect = Rect {
-        left: translation.x,
-        top: translation.y,
-        right: translation.x + element_size.0.width,
-        bottom: translation.y + element_size.0.height,
-    };
-
     // Create main (clickable) box.
     let element = cmds
         .spawn_bundle(PipelineElementBundle {
@@ -426,7 +413,7 @@ fn create_pipeline_element(
     };
 
     // Add label.
-    let label = create_text(cmds, label, text_color, element_rect, &font);
+    let label = create_text(cmds, label, text_color, Transform::default(), &font);
     cmds.entity(element).add_child(label);
 
     // Add inputs and outputs.
@@ -476,7 +463,7 @@ fn create_text(
     cmds: &mut Commands,
     label: &str,
     color: Color,
-    parent_rect: Rect<f32>,
+    transform: Transform,
     font: &Handle<Font>,
 ) -> Entity {
     let sections = label
@@ -490,15 +477,11 @@ fn create_text(
             },
         })
         .collect();
+    // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
+    // front (if something is placed on that layer) while being bit-exact.
+    let text_transform = Transform::from_translation(Vec3::new(0.0, 0.0, 0.5));
     cmds.spawn_bundle(Text2dBundle {
-        transform: Transform::from_translation(Vec3::new(
-            (parent_rect.left + parent_rect.right) / 2.0,
-            (parent_rect.top + parent_rect.bottom) / 2.0,
-            // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
-            // front (if something is placed on that layer) while being bit-exact.
-            0.5,
-        ))
-        .with_scale(Vec2::from(TEXT_SCALING).extend(1.0)),
+        transform: transform * text_transform,
         text: Text {
             sections,
             alignment: TextAlignment {
