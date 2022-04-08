@@ -399,19 +399,33 @@ fn create_pipeline_element(
         Color::rgb(gray, gray, gray)
     };
 
-    // Add label.
-    let label = create_text(
-        cmds,
-        label,
-        text_color,
-        Transform::from_translation(Vec3::new(
-            0.0,
-            element_size.0.height / 2.0 - LINE_HEIGHT,
-            0.0,
-        )),
-        &font,
-    );
-    cmds.entity(element).add_child(label);
+    let y = |line: usize| element_size.0.height / 2.0 - (line as f32 + 0.5) * LINE_HEIGHT;
+    // Add labels.
+    let labels = std::iter::once((label, HorizontalAlign::Center))
+        .chain(
+            effect
+                .controls()
+                .iter()
+                .copied()
+                .zip(std::iter::repeat(HorizontalAlign::Right)),
+        )
+        .zip(1..)
+        .map(|((label, align), line)| {
+            let x = match align {
+                HorizontalAlign::Right => -5.0,
+                _ => 0.0,
+            };
+            create_text(
+                cmds,
+                label,
+                text_color,
+                Transform::from_translation(Vec3::new(x, y(line), 0.0)),
+                &font,
+                align,
+            )
+        })
+        .collect::<Vec<_>>();
+    cmds.entity(element).push_children(&labels);
 
     // Add inputs and outputs.
     let mut inputs = vec![];
@@ -462,6 +476,7 @@ fn create_text(
     color: Color,
     transform: Transform,
     font: &Handle<Font>,
+    horizontal: HorizontalAlign,
 ) -> Entity {
     let sections = label
         .lines()
@@ -483,7 +498,7 @@ fn create_text(
             sections,
             alignment: TextAlignment {
                 vertical: VerticalAlign::Center,
-                horizontal: HorizontalAlign::Center,
+                horizontal,
             },
         },
         ..Default::default()
