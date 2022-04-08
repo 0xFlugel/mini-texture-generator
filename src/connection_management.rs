@@ -33,18 +33,20 @@ pub(crate) fn start_connecting(
         .filter(|(_, i, _, _)| i == &&MyInteraction::Pressed)
     {
         let connector: Entity = connector;
-        // IntelliJ-Rust wrongly remarks an error without `from`.
+        // IntelliJ-Rust wrongly remarks an error when just referencing.
         #[allow(clippy::useless_conversion)]
         let translation = Vec3::from(transform.translation);
         let mut connections: Mut<OutputConnector> = connections;
 
         let transform = Transform::from_translation(translation);
-        let material = materials.get(connector).expect("connector has a material.");
+        let material = materials
+            .get(connector)
+            .expect("connector has no material.");
         let floating = cmds
             .spawn_bundle((
                 meshes
                     .get(connector)
-                    .expect("connector has a mesh.")
+                    .expect("connector has no mesh.")
                     .clone(),
                 (*material).clone(),
                 transform,
@@ -56,7 +58,7 @@ pub(crate) fn start_connecting(
                 RayCastMesh::<MyRaycastSet>::default(),
                 MyInteraction::Pressed,
                 GlobalTransform::default(),
-                Visibility::default(),
+                Visibility { is_visible: false },
                 ComputedVisibility::default(),
             ))
             .id();
