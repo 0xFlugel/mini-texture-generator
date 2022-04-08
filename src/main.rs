@@ -36,12 +36,13 @@ const SIDEBAR_WIDTH: f32 = 0.25;
 const FONT_FILENAME: &str = "Roboto-Regular.ttf";
 /// Text size, high enough to have a acceptable render quality.
 const FONT_SIZE: f32 = 15.0;
-/// Scale factor of input and output connectors.
+/// The line height of pipeline elements.
 ///
-/// The values are normalized to a unit square parent to be scaled relative to the height of a
-/// line in  the sidebar.
-const IO_PAD_SIZE: f32 = 0.5;
-
+/// Specifies how much space is used per "line" in the rectangle. This must practically be greater
+/// than 1.0 to accommodate the decorations of text entry boxes.
+const LINE_HEIGHT: f32 = 1.25 * FONT_SIZE;
+/// Size of the square shape for input and output connectors.
+const IO_PAD_SIZE: f32 = 2. / 3. * LINE_HEIGHT;
 /// The scaling factor for highlighting connector drop off points on hovering.
 const HIGHLIGHT_SCALING: f32 = 1.5;
 
@@ -51,6 +52,7 @@ const TEXTURE_SIZE: u32 = 16;
 //TODO Add a system that removes pipeline elements that are dropped over the sidebar.
 //TODO Add a system that moves overlapping pipeline elements away from each other.
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
+//TODO Implement scrolling through the sidebar with the mouse wheel.
 
 fn main() {
     App::new()
@@ -146,7 +148,6 @@ fn create_element(
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
-    io_pad_size: Res<IoPadSize>,
 ) {
     /// Copy the relevent components directly from the existing template and create a pipeline
     /// element *that is currently being dragged*. The user does not have to click again.
@@ -166,7 +167,6 @@ fn create_element(
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
-        io_pad_size: &Res<IoPadSize>,
     ) {
         let (SidebarElement(effect), _, mesh, material, children, element_size) = data;
         let label = children
@@ -198,7 +198,7 @@ fn create_element(
             materials,
             position.truncate(),
             (*font).clone(),
-            (io_pad_mesh, ***io_pad_size),
+            io_pad_mesh,
             (mesh.clone(), *element_size),
         );
         cmds.entity(new)
@@ -230,16 +230,11 @@ fn create_element(
             meshes.as_ref(),
             font.as_ref(),
             &texts,
-            &io_pad_size,
         );
     }
 }
 
 /// Initialize ressources and the world.
-///
-/// # Parameters
-///
-/// `main_font`: The one font the program will use everywhere.
 fn setup(
     mut cmds: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -288,32 +283,22 @@ fn setup(
         Color::YELLOW_GREEN,
     ];
 
-    // The amount of "lines" in the sidebar. One line space between effects + 2 lines per effect for
-    // IO connectors and Label + one line per parameter field.
-    // +1 offset to have them vertically centered instead of touching the border above or below.
-    let num_lines = EffectType::all()
-        .iter()
-        .map(|e| e.controls().len() + 3)
-        .sum::<usize>() as f32
-        + 1.0;
-    let line_height = win_height / num_lines;
-
     let mut mesh_cache = HashMap::new();
-    let io_pad_size = IO_PAD_SIZE * line_height;
-
     let io_pad_mesh =
-        Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(io_pad_size)))));
+        Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(IO_PAD_SIZE)))));
     mesh_cache.insert(MyMeshes::IoConnector, io_pad_mesh.clone());
 
+    // One line space between effects + 3 lines per effect for IO connectors and Label + one line
+    // per parameter field. Starting at to have them vertically centered instead of touching the
+    // border above or below.
     let mut line_offset = 1;
     for (i, effect) in EffectType::all().iter().enumerate() {
-        let this_lines = effect.controls().len() + 2;
-        let offset = line_offset as f32;
-        let y_from = win_height * (0.5 - offset / num_lines);
-        let y_to = win_height * (0.5 - (offset + this_lines as f32) / num_lines);
-        let size = Vec2::new(0.6 * sidebar_width, (y_to - y_from).abs());
+        let this_lines = effect.controls().len() + 3;
+        let height = LINE_HEIGHT * this_lines as f32;
+        let width = 0.6 * sidebar_width;
 
-        let element_mesh = Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(size))));
+        let element_mesh =
+            Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(width, height)))));
         mesh_cache.insert(MyMeshes::from(effect), element_mesh.clone());
 
         let child = create_pipeline_element(
@@ -322,19 +307,21 @@ fn setup(
             effect.name(),
             materials.add(ColorMaterial::from(colors[i])),
             materials.as_mut(),
-            Vec2::new(0.0, (y_from + y_to) / 2.0),
+            Vec2::new(
+                0.0,
+                win_height / 2.0 - LINE_HEIGHT * line_offset as f32 - height / 2.0,
+            ),
             font.clone(),
-            (io_pad_mesh.clone(), io_pad_size),
-            (element_mesh, ElementSize(Size::new(size.x, size.y))),
+            io_pad_mesh.clone(),
+            (element_mesh, ElementSize(Size::new(width, height))),
         );
         cmds.entity(child).insert(SidebarElement(*effect));
         cmds.entity(sidebar).add_child(child);
 
-        line_offset += this_lines + 1;
+        line_offset += this_lines + 1; // 1 spacer line
     }
 
     cmds.insert_resource(mesh_cache);
-    cmds.insert_resource(IoPadSize(io_pad_size));
 }
 
 /// Create new new entity that is a pipeline element.
@@ -351,7 +338,7 @@ fn create_pipeline_element(
     materials: &mut Assets<ColorMaterial>,
     translation: Vec2,
     font: Handle<Font>,
-    (io_pad_mesh, io_pad_size): (Mesh2dHandle, f32),
+    io_pad_mesh: Mesh2dHandle,
     (element_mesh, element_size): (Mesh2dHandle, ElementSize),
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
@@ -413,7 +400,17 @@ fn create_pipeline_element(
     };
 
     // Add label.
-    let label = create_text(cmds, label, text_color, Transform::default(), &font);
+    let label = create_text(
+        cmds,
+        label,
+        text_color,
+        Transform::from_translation(Vec3::new(
+            0.0,
+            element_size.0.height / 2.0 - LINE_HEIGHT,
+            0.0,
+        )),
+        &font,
+    );
     cmds.entity(element).add_child(label);
 
     // Add inputs and outputs.
@@ -421,8 +418,8 @@ fn create_pipeline_element(
     let mut outputs = vec![];
     {
         // Move the center (0,0) to the top/bottom edge (y=+-1) of the element.
-        let ty_top = -element_size.0.height / 2.0 + io_pad_size / 2.0;
-        let ty_bottom = element_size.0.height / 2.0 - io_pad_size / 2.0;
+        let ty_top = -element_size.0.height / 2.0 + IO_PAD_SIZE / 2.0;
+        let ty_bottom = element_size.0.height / 2.0 - IO_PAD_SIZE / 2.0;
         let material = materials.add(ColorMaterial::from(text_color));
         for i in 1..=effect.inputs() {
             let fraction = i as f32 / (effect.inputs() + 1) as f32;
@@ -589,18 +586,6 @@ enum MyMeshes {
 impl From<&EffectType> for MyMeshes {
     fn from(e: &EffectType) -> Self {
         Self::EffectType(*e)
-    }
-}
-
-/// A resource, specifying the pixel size of the squares that are used as connectors.
-#[derive(Debug, Copy, Clone)]
-struct IoPadSize(f32);
-
-impl Deref for IoPadSize {
-    type Target = f32;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
