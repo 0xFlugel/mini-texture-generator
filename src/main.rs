@@ -144,11 +144,12 @@ fn create_element(
         &Mesh2dHandle,
         &Handle<ColorMaterial>,
         &Children,
+        &ElementSize,
     )>,
     mouse_position: Res<MousePosition>,
     windows: Res<Windows>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    meshes: Res<HashMap<MyMeshes, (Mesh2dHandle, Size)>>,
+    meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
     io_pad_size: Res<IoPadSize>,
@@ -163,17 +164,17 @@ fn create_element(
             &Mesh2dHandle,
             &Handle<ColorMaterial>,
             &Children,
+            &ElementSize,
         ),
         position: Vec3,
         mouse_position: MousePosition,
         materials: &mut Assets<ColorMaterial>,
-        meshes: &HashMap<MyMeshes, (Mesh2dHandle, Size)>,
+        meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
         io_pad_size: &Res<IoPadSize>,
     ) {
-        let (SidebarElement(effect), global_transform, mesh, material, children) = data;
-        let transform = Transform::from(*global_transform).with_translation(position);
+        let (SidebarElement(effect), _, mesh, material, children, element_size) = data;
         let label = children
             .iter()
             // Ignore non-text entities.
@@ -194,18 +195,17 @@ fn create_element(
                 eprintln!("Failed to find the text on the template element.");
                 String::new()
             });
-        let (io_pad_mesh, size) = meshes.get(&MyMeshes::IoConnector).unwrap().clone();
+        let io_pad_mesh = meshes.get(&MyMeshes::IoConnector).unwrap().clone();
         let new = create_pipeline_element(
             *effect,
             cmds,
             &label,
             (*material).clone(),
             materials,
-            transform,
+            position.truncate(),
             (*font).clone(),
             (io_pad_mesh, ***io_pad_size),
-            mesh.clone(),
-            Vec2::new(size.width, size.height),
+            (mesh.clone(), *element_size),
         );
         cmds.entity(new)
             .insert(*effect)
@@ -213,7 +213,7 @@ fn create_element(
             .insert(Draggable)
             .insert(Dragging {
                 start: mouse_position,
-                base: transform,
+                base: Transform::from_translation(position),
             });
     }
 
@@ -309,10 +309,7 @@ fn setup(
 
     let io_pad_mesh =
         Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(io_pad_size)))));
-    mesh_cache.insert(
-        MyMeshes::IoConnector,
-        (io_pad_mesh.clone(), Size::new(io_pad_size, io_pad_size)),
-    );
+    mesh_cache.insert(MyMeshes::IoConnector, io_pad_mesh.clone());
 
     let mut line_offset = 1;
     for (i, effect) in EffectType::all().iter().enumerate() {
@@ -321,13 +318,9 @@ fn setup(
         let y_from = win_height * (0.5 - offset / num_lines);
         let y_to = win_height * (0.5 - (offset + this_lines as f32) / num_lines);
         let size = Vec2::new(0.6 * sidebar_width, (y_to - y_from).abs());
-        let transform = Transform::from_translation(Vec3::new(0.0, (y_from + y_to) / 2.0, 1.0));
 
         let element_mesh = Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(size))));
-        mesh_cache.insert(
-            MyMeshes::from(effect),
-            (element_mesh.clone(), Size::new(size.x, size.y)),
-        );
+        mesh_cache.insert(MyMeshes::from(effect), element_mesh.clone());
 
         let child = create_pipeline_element(
             *effect,
@@ -335,11 +328,10 @@ fn setup(
             effect.name(),
             materials.add(ColorMaterial::from(colors[i])),
             materials.as_mut(),
-            transform,
+            Vec2::new(0.0, (y_from + y_to) / 2.0),
             font.clone(),
             (io_pad_mesh.clone(), io_pad_size),
-            element_mesh,
-            size,
+            (element_mesh, ElementSize(Size::new(size.x, size.y))),
         );
         cmds.entity(child).insert(SidebarElement(*effect));
         cmds.entity(sidebar).add_child(child);
@@ -363,11 +355,10 @@ fn create_pipeline_element(
     label: &str,
     material: Handle<ColorMaterial>,
     materials: &mut Assets<ColorMaterial>,
-    transform: Transform,
+    translation: Vec2,
     font: Handle<Font>,
     (io_pad_mesh, io_pad_size): (Mesh2dHandle, f32),
-    element_mesh: Mesh2dHandle,
-    size: Vec2,
+    (element_mesh, element_size): (Mesh2dHandle, ElementSize),
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
     fn gray(c: Color) -> f32 {
@@ -382,9 +373,9 @@ fn create_pipeline_element(
         ty: f32,
         material: Handle<ColorMaterial>,
         mesh: Mesh2dHandle,
-        parent_size: Vec2,
+        parent_size: ElementSize,
     ) -> Entity {
-        let tx = (-1.0 + 2.0 * tx_fraction) * parent_size.x;
+        let tx = (-1.0 + 2.0 * tx_fraction) * parent_size.0.width;
         // Text is 0.5 layers in front. This is functional and must be in front text as well.
         let tz = 0.75;
         let id = cmds
@@ -395,22 +386,34 @@ fn create_pipeline_element(
                 ..Default::default()
             })
             .insert(C::default())
-            .insert(RayCastMesh::<MyRaycastSet>::default())
-            .insert(MyInteraction::default())
+            .insert_bundle((
+                RayCastMesh::<MyRaycastSet>::default(),
+                MyInteraction::default(),
+            ))
             .id();
         id
     }
 
+    let element_rect = Rect {
+        left: translation.x,
+        top: translation.y,
+        right: translation.x + element_size.0.width,
+        bottom: translation.y + element_size.0.height,
+    };
+
     // Create main (clickable) box.
     let element = cmds
-        .spawn_bundle(ColorMesh2dBundle {
-            transform,
-            mesh: element_mesh,
-            material: material.clone(),
-            ..Default::default()
+        .spawn_bundle(PipelineElementBundle {
+            size: element_size,
+            effect,
+            color_mesh_bundle: ColorMesh2dBundle {
+                transform: Transform::from_translation(translation.extend(1.0)),
+                mesh: element_mesh,
+                material: material.clone(),
+                ..Default::default()
+            },
+            defaultable: PipelineElementBundleDefaultable::default(),
         })
-        .insert(MyInteraction::default())
-        .insert(RayCastMesh::<MyRaycastSet>::default())
         .id();
     let text_color = {
         let background = materials
@@ -423,7 +426,7 @@ fn create_pipeline_element(
     };
 
     // Add label.
-    let label = create_text(cmds, label, text_color, transform, &font);
+    let label = create_text(cmds, label, text_color, element_rect, &font);
     cmds.entity(element).add_child(label);
 
     // Add inputs and outputs.
@@ -431,8 +434,8 @@ fn create_pipeline_element(
     let mut outputs = vec![];
     {
         // Move the center (0,0) to the top/bottom edge (y=+-1) of the element.
-        let ty_top = -size.y / 2.0 + io_pad_size;
-        let ty_bottom = size.y / 2.0 - io_pad_size;
+        let ty_top = -element_size.0.height / 2.0 + io_pad_size / 2.0;
+        let ty_bottom = element_size.0.height / 2.0 - io_pad_size / 2.0;
         let material = materials.add(ColorMaterial::from(text_color));
         for i in 1..=effect.inputs() {
             let fraction = i as f32 / (effect.inputs() + 1) as f32;
@@ -442,7 +445,7 @@ fn create_pipeline_element(
                 ty_top,
                 material.clone(),
                 io_pad_mesh.clone(),
-                size,
+                element_size,
             );
             inputs.push(id);
         }
@@ -454,7 +457,7 @@ fn create_pipeline_element(
                 ty_bottom,
                 material.clone(),
                 io_pad_mesh.clone(),
-                size,
+                element_size,
             );
             outputs.push(id);
         }
@@ -462,6 +465,7 @@ fn create_pipeline_element(
     cmds.entity(element)
         .push_children(&inputs)
         .push_children(&outputs)
+        // Overwrite empty defaults with actual data.
         .insert(InputConnectors(inputs))
         .insert(OutputConnectors(outputs));
 
@@ -472,7 +476,7 @@ fn create_text(
     cmds: &mut Commands,
     label: &str,
     color: Color,
-    transform: Transform,
+    parent_rect: Rect<f32>,
     font: &Handle<Font>,
 ) -> Entity {
     let sections = label
@@ -487,11 +491,14 @@ fn create_text(
         })
         .collect();
     cmds.spawn_bundle(Text2dBundle {
-        transform: transform
-            .with_scale(Vec2::from(TEXT_SCALING).extend(1.0))
+        transform: Transform::from_translation(Vec3::new(
+            (parent_rect.left + parent_rect.right) / 2.0,
+            (parent_rect.top + parent_rect.bottom) / 2.0,
             // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
             // front (if something is placed on that layer) while being bit-exact.
-            .with_translation(Vec3::new(0.0, 0.0, 0.5)),
+            0.5,
+        ))
+        .with_scale(Vec2::from(TEXT_SCALING).extend(1.0)),
         text: Text {
             sections,
             alignment: TextAlignment {
@@ -634,14 +641,26 @@ impl Deref for SidebarElement {
 #[derive(Bundle)]
 struct PipelineElementBundle {
     effect: EffectType,
+    size: ElementSize,
+    #[bundle]
+    defaultable: PipelineElementBundleDefaultable,
+    #[bundle]
+    color_mesh_bundle: ColorMesh2dBundle,
+}
+#[derive(Default, Bundle)]
+struct PipelineElementBundleDefaultable {
     inputs: InputConnectors,
     outputs: OutputConnectors,
     interaction: MyInteraction,
     raycast_set: RayCastMesh<MyRaycastSet>,
-    mesh: Mesh2dHandle,
-    material: Handle<ColorMaterial>,
-    transform: Transform,
-    global_transform: GlobalTransform,
-    visibility: Visibility,
-    comp_vis: ComputedVisibility,
 }
+
+/// The size of a pipeline element.
+///
+/// # Impl
+///
+/// Used so that other internal elements can be put at the correct offset. Often a view-transform is
+/// used to work on a local, normalized coordinate system, but that does not work here, because the
+/// child elements shall not be affected by scaling which would be necessary.
+#[derive(Debug, Copy, Clone, Component)]
+struct ElementSize(Size);

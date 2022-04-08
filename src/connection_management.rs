@@ -314,11 +314,11 @@ fn delete_connection<'a>(
 /// The [OutputConnectors] are a different component to allow system queries to filter for the
 /// specific type directly (on the engine level), instead of going through them on the system level.
 /// This is faster and more convenient to use.
-#[derive(Debug, Clone, Component)]
+#[derive(Debug, Default, Clone, Component)]
 pub(crate) struct InputConnectors(pub(crate) Vec<Entity>);
 
 /// Output connectors, like [InputConnectors].
-#[derive(Debug, Clone, Component)]
+#[derive(Debug, Default, Clone, Component)]
 pub(crate) struct OutputConnectors(pub(crate) Vec<Entity>);
 
 /// An input connector on a pipeline element.
