@@ -15,8 +15,10 @@
 
 mod connection_management;
 mod interaction;
+mod text_entry;
 
 use crate::interaction::InteractionPlugin;
+use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
@@ -24,6 +26,7 @@ use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::ops::Deref;
 
@@ -58,6 +61,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(InteractionPlugin)
+        .add_plugin(TextEntryPlugin)
         .add_startup_system(setup)
         .add_system(create_element)
         .add_system(connection_management::start_connecting)
@@ -145,6 +149,7 @@ fn create_element(
     mouse_position: Res<MousePosition>,
     windows: Res<Windows>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut mesh_assets: ResMut<Assets<Mesh>>,
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
@@ -164,6 +169,7 @@ fn create_element(
         position: Vec3,
         mouse_position: MousePosition,
         materials: &mut Assets<ColorMaterial>,
+        mesh_assets: &mut Assets<Mesh>,
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
@@ -191,18 +197,20 @@ fn create_element(
             });
         let io_pad_mesh = meshes.get(&MyMeshes::IoConnector).unwrap().clone();
         let new = create_pipeline_element(
-            *effect,
+            effect.clone(),
             cmds,
             &label,
             (*material).clone(),
             materials,
+            mesh_assets,
             position.truncate(),
             (*font).clone(),
             io_pad_mesh,
             (mesh.clone(), *element_size),
+            true,
         );
         cmds.entity(new)
-            .insert(*effect)
+            .insert(effect.clone())
             .insert(MyInteraction::Pressed)
             .insert(Draggable)
             .insert(Dragging {
@@ -227,6 +235,7 @@ fn create_element(
             position,
             *mouse_position,
             materials.as_mut(),
+            mesh_assets.as_mut(),
             meshes.as_ref(),
             font.as_ref(),
             &texts,
@@ -238,7 +247,7 @@ fn create_element(
 fn setup(
     mut cmds: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut mesh_assets: ResMut<Assets<Mesh>>,
     asset_server: Res<AssetServer>,
     windows: Res<Windows>,
 ) {
@@ -262,7 +271,7 @@ fn setup(
                 0.0,
                 0.0,
             )),
-            mesh: Mesh2dHandle(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(
+            mesh: Mesh2dHandle(mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::new(
                 sidebar_width,
                 win_height,
             ))))),
@@ -285,7 +294,7 @@ fn setup(
 
     let mut mesh_cache = HashMap::new();
     let io_pad_mesh =
-        Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::splat(IO_PAD_SIZE)))));
+        Mesh2dHandle::from(mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::splat(IO_PAD_SIZE)))));
     mesh_cache.insert(MyMeshes::IoConnector, io_pad_mesh.clone());
 
     // One line space between effects + 3 lines per effect for IO connectors and Label + one line
@@ -297,16 +306,18 @@ fn setup(
         let height = LINE_HEIGHT * this_lines as f32;
         let width = 0.6 * sidebar_width;
 
-        let element_mesh =
-            Mesh2dHandle::from(meshes.add(Mesh::from(shape::Quad::new(Vec2::new(width, height)))));
+        let element_mesh = Mesh2dHandle::from(
+            mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::new(width, height)))),
+        );
         mesh_cache.insert(MyMeshes::from(effect), element_mesh.clone());
 
         let child = create_pipeline_element(
-            *effect,
+            effect.clone(),
             &mut cmds,
             effect.name(),
             materials.add(ColorMaterial::from(colors[i])),
             materials.as_mut(),
+            mesh_assets.as_mut(),
             Vec2::new(
                 0.0,
                 win_height / 2.0 - LINE_HEIGHT * line_offset as f32 - height / 2.0,
@@ -314,8 +325,9 @@ fn setup(
             font.clone(),
             io_pad_mesh.clone(),
             (element_mesh, ElementSize(Size::new(width, height))),
+            false,
         );
-        cmds.entity(child).insert(SidebarElement(*effect));
+        cmds.entity(child).insert(SidebarElement(effect.clone()));
         cmds.entity(sidebar).add_child(child);
 
         line_offset += this_lines + 1; // 1 spacer line
@@ -325,6 +337,11 @@ fn setup(
 }
 
 /// Create new new entity that is a pipeline element.
+///
+/// # Parameter
+///
+/// `editible` is a flag whether the inner text field for setting effect parameter values are
+/// enabled.
 ///
 /// # Note
 ///
@@ -336,10 +353,12 @@ fn create_pipeline_element(
     label: &str,
     material: Handle<ColorMaterial>,
     materials: &mut Assets<ColorMaterial>,
+    mesh_assets: &mut Assets<Mesh>,
     translation: Vec2,
     font: Handle<Font>,
     io_pad_mesh: Mesh2dHandle,
     (element_mesh, element_size): (Mesh2dHandle, ElementSize),
+    editible: bool,
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
     fn gray(c: Color) -> f32 {
@@ -379,14 +398,14 @@ fn create_pipeline_element(
     let element = cmds
         .spawn_bundle(PipelineElementBundle {
             size: element_size,
-            effect,
+            effect: effect.clone(),
             color_mesh_bundle: ColorMesh2dBundle {
                 transform: Transform::from_translation(translation.extend(1.0)),
                 mesh: element_mesh,
                 material: material.clone(),
                 ..Default::default()
             },
-            defaultable: PipelineElementBundleDefaultable::default(),
+            interaction: InteractionBundle::default(),
         })
         .id();
     let text_color = {
@@ -426,6 +445,34 @@ fn create_pipeline_element(
         })
         .collect::<Vec<_>>();
     cmds.entity(element).push_children(&labels);
+
+    let text_field_material = materials.add(ColorMaterial::from(Color::WHITE));
+    let text_fields = (2..effect.controls().len() + 2)
+        .map(|line| Rect {
+            left: 5.0,
+            right: element_size.0.width / 2.0 * 0.9,
+            top: y(line) + 0.5 * LINE_HEIGHT,
+            bottom: y(line) - 0.5 * LINE_HEIGHT,
+        })
+        .enumerate()
+        .map(|(param_idx, rect)| {
+            let text_field = create_text_field(
+                cmds,
+                rect,
+                0.0,
+                (element, param_idx),
+                text_field_material.clone(),
+                mesh_assets,
+                &font,
+            );
+            if editible {
+                cmds.entity(text_field)
+                    .insert_bundle(InteractionBundle::default());
+            }
+            text_field
+        })
+        .collect::<Vec<_>>();
+    cmds.entity(element).push_children(&text_fields);
 
     // Add inputs and outputs.
     let mut inputs = vec![];
@@ -470,6 +517,49 @@ fn create_pipeline_element(
     element
 }
 
+/// Create a text field entity.
+fn create_text_field(
+    cmds: &mut Commands,
+    rect: Rect<f32>,
+    value: f32,
+    param_target: (Entity, usize),
+    material: Handle<ColorMaterial>,
+    mesh_assets: &mut Assets<Mesh>,
+    font: &Handle<Font>,
+) -> Entity {
+    let center = Vec2::new(
+        (rect.left + rect.right) / 2.0,
+        (rect.top + rect.bottom) / 2.0,
+    );
+    let size = Vec2::new(rect.right - rect.left, rect.top - rect.bottom);
+    let inner_text = create_text(
+        cmds,
+        &value.to_string(),
+        Color::BLACK,
+        Transform::default(),
+        font,
+        HorizontalAlign::Center,
+    );
+    cmds.spawn()
+        .add_child(inner_text)
+        .insert_bundle(TextFieldBundle {
+            color_mesh_bundle: ColorMesh2dBundle {
+                // z=+0.25 to be in front of the element background (+0) and behind text (+0.5).
+                transform: Transform::from_translation(center.extend(0.25)),
+                material,
+                mesh: mesh_assets.add(Mesh::from(shape::Quad::new(size))).into(),
+                ..Default::default()
+            },
+            value: TextValue::new(value.to_string(), inner_text),
+            target_value: ValueBinding {
+                entity: param_target.0,
+                parameter_idx: param_target.1,
+            },
+            interaction: InteractionBundle::default(),
+        })
+        .id()
+}
+
 fn create_text(
     cmds: &mut Commands,
     label: &str,
@@ -506,31 +596,44 @@ fn create_text(
     .id()
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Component)]
+#[derive(Debug, Clone, Component)]
 enum EffectType {
     Rgba,
     Hsva,
     Gray,
-    Constant,
+    Constant(f32),
     Identity,
-    Rotate,
-    Offset,
-    Scale,
+    Rotate(f32),
+    Offset(f32, f32),
+    Scale(f32, f32),
     //TODO add, mul, div, functions (all on values instead of positions).
+}
+
+/// Implement equality as being the same variant to be useful for [HashMap]s.
+impl PartialEq for EffectType {
+    fn eq(&self, other: &Self) -> bool {
+        self.ord() == other.ord()
+    }
+}
+impl Eq for EffectType {}
+impl Hash for EffectType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_usize(self.ord());
+    }
 }
 
 impl EffectType {
     /// A list of all variants.
-    fn all() -> &'static [Self] {
-        &[
+    fn all() -> Vec<Self> {
+        vec![
             Self::Rgba,
             Self::Hsva,
             Self::Gray,
-            Self::Constant,
+            Self::Constant(1.0),
             Self::Identity,
-            Self::Rotate,
-            Self::Offset,
-            Self::Scale,
+            Self::Rotate(1.0),
+            Self::Offset(1.0, 1.0),
+            Self::Scale(1.0, 1.0),
         ]
     }
 
@@ -540,11 +643,11 @@ impl EffectType {
             EffectType::Rgba => "RGBA",
             EffectType::Hsva => "HSVA",
             EffectType::Gray => "GRAY",
-            EffectType::Constant => "Constant",
+            EffectType::Constant(..) => "Constant",
             EffectType::Identity => "Identity",
-            EffectType::Rotate => "Rotate",
-            EffectType::Offset => "Offset",
-            EffectType::Scale => "Scale",
+            EffectType::Rotate(..) => "Rotate",
+            EffectType::Offset(..) => "Offset",
+            EffectType::Scale(..) => "Scale",
         }
     }
 
@@ -554,11 +657,11 @@ impl EffectType {
             EffectType::Rgba => 4,
             EffectType::Hsva => 4,
             EffectType::Gray => 2,
-            EffectType::Constant => 0,
+            EffectType::Constant(..) => 0,
             EffectType::Identity => 0,
-            EffectType::Rotate => 1,
-            EffectType::Offset => 1,
-            EffectType::Scale => 1,
+            EffectType::Rotate(..) => 1,
+            EffectType::Offset(..) => 1,
+            EffectType::Scale(..) => 1,
         }
     }
 
@@ -568,31 +671,45 @@ impl EffectType {
             EffectType::Rgba => 0,
             EffectType::Hsva => 0,
             EffectType::Gray => 0,
-            EffectType::Constant => 1,
+            EffectType::Constant(..) => 1,
             EffectType::Identity => 1,
-            EffectType::Rotate => 1,
-            EffectType::Offset => 1,
-            EffectType::Scale => 1,
+            EffectType::Rotate(..) => 1,
+            EffectType::Offset(..) => 1,
+            EffectType::Scale(..) => 1,
         }
     }
 
     /// The names of internal parameters of each variant.
-    fn controls(&self) -> &[&'static str] {
+    fn controls(&self) -> &'static [&'static str] {
         match self {
             EffectType::Rgba => &[],
             EffectType::Hsva => &[],
             EffectType::Gray => &[],
-            EffectType::Constant => &["Value"],
+            EffectType::Constant(..) => &["Value"],
             EffectType::Identity => &[],
-            EffectType::Rotate => &["Angle"],
-            EffectType::Offset => &["X", "Y"],
-            EffectType::Scale => &["X", "Y"],
+            EffectType::Rotate(..) => &["Angle"],
+            EffectType::Offset(..) => &["X", "Y"],
+            EffectType::Scale(..) => &["X", "Y"],
+        }
+    }
+
+    /// Return a unique number for each variant.
+    fn ord(&self) -> usize {
+        match self {
+            EffectType::Rgba => 0,
+            EffectType::Hsva => 1,
+            EffectType::Gray => 2,
+            EffectType::Constant(_) => 3,
+            EffectType::Identity => 4,
+            EffectType::Rotate(_) => 5,
+            EffectType::Offset(_, _) => 6,
+            EffectType::Scale(_, _) => 7,
         }
     }
 }
 
 /// IDs for the Mesh2dHandle cache resource.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum MyMeshes {
     EffectType(EffectType),
     IoConnector,
@@ -600,7 +717,7 @@ enum MyMeshes {
 
 impl From<&EffectType> for MyMeshes {
     fn from(e: &EffectType) -> Self {
-        Self::EffectType(*e)
+        Self::EffectType(e.clone())
     }
 }
 
@@ -626,14 +743,14 @@ struct PipelineElementBundle {
     effect: EffectType,
     size: ElementSize,
     #[bundle]
-    defaultable: PipelineElementBundleDefaultable,
+    interaction: InteractionBundle,
     #[bundle]
     color_mesh_bundle: ColorMesh2dBundle,
 }
+
+/// A small helper bundle that has all necessary components for mouse interaction in this project.
 #[derive(Default, Bundle)]
-struct PipelineElementBundleDefaultable {
-    inputs: InputConnectors,
-    outputs: OutputConnectors,
+struct InteractionBundle {
     interaction: MyInteraction,
     raycast_set: RayCastMesh<MyRaycastSet>,
 }
@@ -647,3 +764,15 @@ struct PipelineElementBundleDefaultable {
 /// child elements shall not be affected by scaling which would be necessary.
 #[derive(Debug, Copy, Clone, Component)]
 struct ElementSize(Size);
+
+/// A bundle for text entry fields, holding the currently shown text and the binding to the
+/// manipulated effect parameter.
+#[derive(Bundle)]
+struct TextFieldBundle {
+    value: TextValue,
+    target_value: ValueBinding,
+    #[bundle]
+    interaction: InteractionBundle,
+    #[bundle]
+    color_mesh_bundle: ColorMesh2dBundle,
+}
