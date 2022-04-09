@@ -17,6 +17,7 @@ mod connection_management;
 mod interaction;
 mod text_entry;
 
+use crate::connection_management::Connection;
 use crate::interaction::InteractionPlugin;
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::math::XY;
@@ -77,7 +78,13 @@ fn main() {
 
 /// React to changes in connections and update the pipeline (i.e. texture generation function)
 /// accordingly.
-fn update_texture(render_effects: Query<&Effect>, mut image_assets: ResMut<Assets<Image>>) {
+fn update_texture(
+    effects: Query<(&Effect, &InputConnectors), Without<SidebarElement>>,
+    connections: Query<&Connection>,
+    input_connectors: Query<&InputConnector>,
+    parents: Query<&Parent>,
+    mut image_assets: ResMut<Assets<Image>>,
+) {
     const ELEM_SIZE: usize = size_of::<PixelData>();
 
     fn write_pixel(img: &mut Image, at: XY<u32>, pixel: Color) {
@@ -90,16 +97,103 @@ fn update_texture(render_effects: Query<&Effect>, mut image_assets: ResMut<Asset
             .collect::<Vec<_>>();
         img.data[offset..offset + ELEM_SIZE].copy_from_slice(&pixel);
     }
+    /// Calculates a single-channel color value recursively.
+    ///
+    /// # Parameter
+    ///
+    /// `at` is the coordinate to sample the input at.
+    ///
+    /// `connection` is the [Connection] entity for which to calculate the single-channel color
+    /// value.
+    ///
+    /// # Return
+    ///
+    /// `Some` color value, or `None` if any entity resolution failed.
+    fn calc(
+        at: Vec2,
+        connection: Entity,
+        effects: &Query<(&Effect, &InputConnectors), Without<SidebarElement>>,
+        connections: &Query<&Connection>,
+        input_connectors: &Query<&InputConnector>,
+        parents: &Query<&Parent>,
+    ) -> Option<f32> {
+        let output_connector = connections.get(connection).ok()?.output_connector.entity();
+        let previous = parents.get(output_connector).ok()?.0;
+        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok()?;
+        match effect {
+            Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
+            Effect::Constant(c) => Some(*c),
+            Effect::LinearX => Some(at.x as _),
+            Effect::Rotate(angle) => {
+                let rotation = Transform::from_rotation(Quat::from_rotation_z(*angle));
+                let at = (rotation * at.extend(1.0)).truncate();
+                calc(
+                    at,
+                    inputs.0[0],
+                    &effects,
+                    &connections,
+                    &input_connectors,
+                    &parents,
+                )
+            }
+            Effect::Offset(x, y) => calc(
+                at + Vec2::new(*x, *y),
+                inputs.0[0],
+                &effects,
+                &connections,
+                &input_connectors,
+                &parents,
+            ),
+            Effect::Scale(x, y) => calc(
+                at * Vec2::new(*x, *y),
+                inputs.0[0],
+                &effects,
+                &connections,
+                &input_connectors,
+                &parents,
+            ),
+        }
+    }
 
-    for effect in render_effects.iter() {
+    for (effect, inputs) in effects.iter() {
         let image = match effect {
             Effect::Rgba(Some(h)) | Effect::Hsva(Some(h)) | Effect::Gray(Some(h)) => {
                 image_assets.get_mut(h)
             }
+            Effect::Rgba(None) | Effect::Hsva(None) | Effect::Gray(None) => {
+                eprintln!("Consumer does not have a display.");
+                None
+            }
             _ => None,
         };
-        if let Some(mut image) = image {
-            todo!()
+        if let Some(image) = image {
+            for x in 0..TEXTURE_SIZE {
+                for y in 0..TEXTURE_SIZE {
+                    let at = Vec2::new(x as f32, y as f32);
+                    let inputs = inputs
+                        .0
+                        .iter()
+                        .map(|connection| {
+                            calc(
+                                at,
+                                *connection,
+                                &effects,
+                                &connections,
+                                &input_connectors,
+                                &parents,
+                            )
+                            .unwrap_or(0.0)
+                        })
+                        .collect::<Vec<_>>();
+                    let color = match effect {
+                        Effect::Rgba(..) => Color::rgba(inputs[0], inputs[1], inputs[2], inputs[3]),
+                        Effect::Hsva(..) => Color::hsla(inputs[0], inputs[1], inputs[2], inputs[3]),
+                        Effect::Gray(..) => Color::rgba(inputs[0], inputs[0], inputs[0], inputs[1]),
+                        _ => unreachable!(),
+                    };
+                    write_pixel(image, XY { x, y }, color);
+                }
+            }
         }
     }
 }
@@ -378,6 +472,39 @@ fn create_pipeline_element(
         id
     }
 
+    // Create the texture display above the consuming pipeline elements.
+    let add_texture_display = !template
+        && matches!(
+            effect,
+            Effect::Rgba(..) | Effect::Hsva(..) | Effect::Gray(..)
+        );
+    let (effect, texture) = if add_texture_display {
+        let size = element_size.0.width;
+        let transform = Transform::from_translation(Vec3::new(
+            0.0,
+            // Put texture directly above the element.
+            element_size.0.height / 2.0 + size / 2.0,
+            // Raise the texture above all other elements as that is the central part of the entire
+            // program.
+            0.9,
+        ));
+        let (texture, image_handle) =
+            create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
+        let linked = match effect {
+            Effect::Rgba(_) => Effect::Rgba(Some(image_handle)),
+            Effect::Hsva(_) => Effect::Hsva(Some(image_handle)),
+            Effect::Gray(_) => Effect::Gray(Some(image_handle)),
+            Effect::Constant(..)
+            | Effect::LinearX
+            | Effect::Rotate(..)
+            | Effect::Offset(..)
+            | Effect::Scale(..) => unreachable!(),
+        };
+        (linked, Some(texture))
+    } else {
+        (effect, None)
+    };
+
     // Create main (clickable) box.
     let element = cmds
         .spawn_bundle(PipelineElementBundle {
@@ -392,6 +519,9 @@ fn create_pipeline_element(
             interaction: InteractionBundle::default(),
         })
         .id();
+    if let Some(texture) = texture {
+        cmds.entity(element).add_child(texture);
+    }
     let text_color = {
         let background = materials
             .get(material)
@@ -499,26 +629,6 @@ fn create_pipeline_element(
         .insert(InputConnectors(inputs))
         .insert(OutputConnectors(outputs));
 
-    let add_texture_display = !template
-        && matches!(
-            effect,
-            Effect::Rgba(..) | Effect::Hsva(..) | Effect::Gray(..)
-        );
-    if add_texture_display {
-        let size = element_size.0.width;
-        let transform = Transform::from_translation(Vec3::new(
-            0.0,
-            // Put texture directly above the element.
-            element_size.0.height / 2.0 + size / 2.0,
-            // Raise the texture above all other elements as that is the central part of the entire
-            // program.
-            0.9,
-        ));
-        let texture =
-            create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
-        cmds.entity(element).add_child(texture);
-    }
-
     element
 }
 
@@ -613,8 +723,8 @@ fn create_image_entity(
     image_assets: &mut Assets<Image>,
     size: f32,
     transform: Transform,
-) -> Entity {
-    let image = image_assets.add(Image::new(
+) -> (Entity, Handle<Image>) {
+    let handle = image_assets.add(Image::new(
         Extent3d {
             width: TEXTURE_SIZE,
             height: TEXTURE_SIZE,
@@ -628,18 +738,20 @@ fn create_image_entity(
             .collect(),
         TEXTURE_FORMAT,
     ));
-    cmds.spawn_bundle(ColorMesh2dBundle {
-        mesh: mesh_assets
-            .add(Mesh::from(shape::Quad::new(Vec2::splat(size))))
-            .into(),
-        material: material_assets.add(ColorMaterial {
-            color: Color::WHITE,
-            texture: Some(image.clone()),
-        }),
-        transform,
-        ..Default::default()
-    })
-    .id()
+    let image = cmds
+        .spawn_bundle(ColorMesh2dBundle {
+            mesh: mesh_assets
+                .add(Mesh::from(shape::Quad::new(Vec2::splat(size))))
+                .into(),
+            material: material_assets.add(ColorMaterial {
+                color: Color::WHITE,
+                texture: Some(handle.clone()),
+            }),
+            transform,
+            ..Default::default()
+        })
+        .id();
+    (image, handle)
 }
 
 #[derive(Debug, Clone, Component)]
