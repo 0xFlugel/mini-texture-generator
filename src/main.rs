@@ -301,7 +301,7 @@ fn setup(
     // per parameter field. Starting at to have them vertically centered instead of touching the
     // border above or below.
     let mut line_offset = 1;
-    for (i, effect) in EffectType::all().iter().enumerate() {
+    for (i, effect) in Effect::all().iter().enumerate() {
         let this_lines = effect.controls().len() + 3;
         let height = LINE_HEIGHT * this_lines as f32;
         let width = 0.6 * sidebar_width;
@@ -348,7 +348,7 @@ fn setup(
 /// The element is interactive but not tagged as a sidebar element or a active pipeline part.
 #[allow(clippy::too_many_arguments)]
 fn create_pipeline_element(
-    effect: EffectType,
+    effect: Effect,
     cmds: &mut Commands,
     label: &str,
     material: Handle<ColorMaterial>,
@@ -597,7 +597,7 @@ fn create_text(
 }
 
 #[derive(Debug, Clone, Component)]
-enum EffectType {
+enum Effect {
     Rgba,
     Hsva,
     Gray,
@@ -610,19 +610,19 @@ enum EffectType {
 }
 
 /// Implement equality as being the same variant to be useful for [HashMap]s.
-impl PartialEq for EffectType {
+impl PartialEq for Effect {
     fn eq(&self, other: &Self) -> bool {
         self.ord() == other.ord()
     }
 }
-impl Eq for EffectType {}
-impl Hash for EffectType {
+impl Eq for Effect {}
+impl Hash for Effect {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_usize(self.ord());
     }
 }
 
-impl EffectType {
+impl Effect {
     /// A list of all variants.
     fn all() -> Vec<Self> {
         vec![
@@ -640,70 +640,70 @@ impl EffectType {
     /// A display name for each variant.
     fn name(&self) -> &str {
         match self {
-            EffectType::Rgba => "RGBA",
-            EffectType::Hsva => "HSVA",
-            EffectType::Gray => "GRAY",
-            EffectType::Constant(..) => "Constant",
-            EffectType::Identity => "Identity",
-            EffectType::Rotate(..) => "Rotate",
-            EffectType::Offset(..) => "Offset",
-            EffectType::Scale(..) => "Scale",
+            Effect::Rgba => "RGBA",
+            Effect::Hsva => "HSVA",
+            Effect::Gray => "GRAY",
+            Effect::Constant(..) => "Constant",
+            Effect::Identity => "Identity",
+            Effect::Rotate(..) => "Rotate",
+            Effect::Offset(..) => "Offset",
+            Effect::Scale(..) => "Scale",
         }
     }
 
     /// The number of input connections for the variant.
     fn inputs(&self) -> usize {
         match self {
-            EffectType::Rgba => 4,
-            EffectType::Hsva => 4,
-            EffectType::Gray => 2,
-            EffectType::Constant(..) => 0,
-            EffectType::Identity => 0,
-            EffectType::Rotate(..) => 1,
-            EffectType::Offset(..) => 1,
-            EffectType::Scale(..) => 1,
+            Effect::Rgba => 4,
+            Effect::Hsva => 4,
+            Effect::Gray => 2,
+            Effect::Constant(..) => 0,
+            Effect::Identity => 0,
+            Effect::Rotate(..) => 1,
+            Effect::Offset(..) => 1,
+            Effect::Scale(..) => 1,
         }
     }
 
     /// The number of output connections for the variant.
     fn outputs(&self) -> usize {
         match self {
-            EffectType::Rgba => 0,
-            EffectType::Hsva => 0,
-            EffectType::Gray => 0,
-            EffectType::Constant(..) => 1,
-            EffectType::Identity => 1,
-            EffectType::Rotate(..) => 1,
-            EffectType::Offset(..) => 1,
-            EffectType::Scale(..) => 1,
+            Effect::Rgba => 0,
+            Effect::Hsva => 0,
+            Effect::Gray => 0,
+            Effect::Constant(..) => 1,
+            Effect::Identity => 1,
+            Effect::Rotate(..) => 1,
+            Effect::Offset(..) => 1,
+            Effect::Scale(..) => 1,
         }
     }
 
     /// The names of internal parameters of each variant.
     fn controls(&self) -> &'static [&'static str] {
         match self {
-            EffectType::Rgba => &[],
-            EffectType::Hsva => &[],
-            EffectType::Gray => &[],
-            EffectType::Constant(..) => &["Value"],
-            EffectType::Identity => &[],
-            EffectType::Rotate(..) => &["Angle"],
-            EffectType::Offset(..) => &["X", "Y"],
-            EffectType::Scale(..) => &["X", "Y"],
+            Effect::Rgba => &[],
+            Effect::Hsva => &[],
+            Effect::Gray => &[],
+            Effect::Constant(..) => &["Value"],
+            Effect::Identity => &[],
+            Effect::Rotate(..) => &["Angle"],
+            Effect::Offset(..) => &["X", "Y"],
+            Effect::Scale(..) => &["X", "Y"],
         }
     }
 
     /// Return a unique number for each variant.
     fn ord(&self) -> usize {
         match self {
-            EffectType::Rgba => 0,
-            EffectType::Hsva => 1,
-            EffectType::Gray => 2,
-            EffectType::Constant(_) => 3,
-            EffectType::Identity => 4,
-            EffectType::Rotate(_) => 5,
-            EffectType::Offset(_, _) => 6,
-            EffectType::Scale(_, _) => 7,
+            Effect::Rgba => 0,
+            Effect::Hsva => 1,
+            Effect::Gray => 2,
+            Effect::Constant(_) => 3,
+            Effect::Identity => 4,
+            Effect::Rotate(_) => 5,
+            Effect::Offset(_, _) => 6,
+            Effect::Scale(_, _) => 7,
         }
     }
 }
@@ -711,26 +711,26 @@ impl EffectType {
 /// IDs for the Mesh2dHandle cache resource.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum MyMeshes {
-    EffectType(EffectType),
+    EffectType(Effect),
     IoConnector,
 }
 
-impl From<&EffectType> for MyMeshes {
-    fn from(e: &EffectType) -> Self {
+impl From<&Effect> for MyMeshes {
+    fn from(e: &Effect) -> Self {
         Self::EffectType(e.clone())
     }
 }
 
 /// A marker for being a template in the sidebar, instead of an interactive pipeline element.
 #[derive(Debug, Component)]
-struct SidebarElement(EffectType);
+struct SidebarElement(Effect);
 
 /// A marker for being the sidebar, the parent of the sidebar elements.
 #[derive(Debug, Component)]
 struct Sidebar;
 
 impl Deref for SidebarElement {
-    type Target = EffectType;
+    type Target = Effect;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -740,7 +740,7 @@ impl Deref for SidebarElement {
 /// A bundle for creating a full pipeline element entity.
 #[derive(Bundle)]
 struct PipelineElementBundle {
-    effect: EffectType,
+    effect: Effect,
     size: ElementSize,
     #[bundle]
     interaction: InteractionBundle,

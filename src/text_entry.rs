@@ -1,4 +1,4 @@
-use crate::{EffectType, MyInteraction};
+use crate::{Effect, MyInteraction};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -106,7 +106,7 @@ impl TextEntryPlugin {
     /// Manipulates effect parameters based on changes to the text in text fields.
     fn update_bound_parameter(
         text: Query<(&TextValue, &ValueBinding), Changed<TextValue>>,
-        mut params: Query<&mut EffectType>,
+        mut params: Query<&mut Effect>,
     ) {
         for (
             TextValue { parsed, .. },
@@ -119,16 +119,16 @@ impl TextEntryPlugin {
             if let Some(parsed) = parsed.clone() {
                 match params.get_mut(*entity) {
                     Ok(mut effect) => match effect.as_mut() {
-                        &mut EffectType::Constant(ref mut value) => *value = parsed,
-                        &mut EffectType::Rotate(ref mut angle) => *angle = parsed,
-                        &mut EffectType::Offset(ref mut x, ref mut y) => {
+                        &mut Effect::Constant(ref mut value) => *value = parsed,
+                        &mut Effect::Rotate(ref mut angle) => *angle = parsed,
+                        &mut Effect::Offset(ref mut x, ref mut y) => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {
                                 *y = parsed
                             }
                         }
-                        &mut EffectType::Scale(ref mut x, ref mut y) => {
+                        &mut Effect::Scale(ref mut x, ref mut y) => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {
