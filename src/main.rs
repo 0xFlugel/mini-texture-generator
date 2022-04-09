@@ -130,27 +130,27 @@ fn update_texture(
                 calc(
                     at,
                     inputs.0[0],
-                    &effects,
-                    &connections,
-                    &input_connectors,
-                    &parents,
+                    effects,
+                    connections,
+                    input_connectors,
+                    parents,
                 )
             }
             Effect::Offset(x, y) => calc(
                 at + Vec2::new(*x, *y),
                 inputs.0[0],
-                &effects,
-                &connections,
-                &input_connectors,
-                &parents,
+                effects,
+                connections,
+                input_connectors,
+                parents,
             ),
             Effect::Scale(x, y) => calc(
                 at * Vec2::new(*x, *y),
                 inputs.0[0],
-                &effects,
-                &connections,
-                &input_connectors,
-                &parents,
+                effects,
+                connections,
+                input_connectors,
+                parents,
             ),
         }
     }

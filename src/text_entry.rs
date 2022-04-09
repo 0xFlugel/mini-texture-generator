@@ -17,6 +17,7 @@ impl Plugin for TextEntryPlugin {
 
 impl TextEntryPlugin {
     /// Sets the text entry focus based on [MyInteraction]s.
+    #[allow(clippy::type_complexity)]
     fn set_focus(
         interactions: Query<(Entity, &MyInteraction), (Changed<MyInteraction>, With<TextValue>)>,
         defocus_interactions: Query<&MyInteraction, (Changed<MyInteraction>, Without<TextValue>)>,
@@ -116,19 +117,19 @@ impl TextEntryPlugin {
             },
         ) in text.iter()
         {
-            if let Some(parsed) = parsed.clone() {
+            if let Some(parsed) = *parsed {
                 match params.get_mut(*entity) {
                     Ok(mut effect) => match effect.as_mut() {
-                        &mut Effect::Constant(ref mut value) => *value = parsed,
-                        &mut Effect::Rotate(ref mut angle) => *angle = parsed,
-                        &mut Effect::Offset(ref mut x, ref mut y) => {
+                        Effect::Constant(ref mut value) => *value = parsed,
+                        Effect::Rotate(ref mut angle) => *angle = parsed,
+                        Effect::Offset(ref mut x, ref mut y) => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {
                                 *y = parsed
                             }
                         }
-                        &mut Effect::Scale(ref mut x, ref mut y) => {
+                        Effect::Scale(ref mut x, ref mut y) => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {
