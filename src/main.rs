@@ -204,10 +204,10 @@ fn create_element(
             (*font).clone(),
             io_pad_mesh,
             (mesh.clone(), *element_size),
-            true,
+            false,
         );
         // The cloned effect is immediately in a dragging state. No new clicking needed.
-        // This is not done in the `create_pipeline_element` function based on the `editable` flag
+        // This is not done in the `create_pipeline_element` function based on the `template` flag
         // to not spread out logic and state definitions even further.
         cmds.entity(new)
             .insert(effect.clone())
@@ -325,7 +325,7 @@ fn setup(
             font.clone(),
             io_pad_mesh.clone(),
             (element_mesh, ElementSize(Size::new(width, height))),
-            false,
+            true,
         );
         cmds.entity(child).insert(SidebarElement(effect.clone()));
         cmds.entity(sidebar).add_child(child);
@@ -340,8 +340,8 @@ fn setup(
 ///
 /// # Parameter
 ///
-/// `editible` is a flag whether the inner text field for setting effect parameter values are
-/// enabled.
+/// `template` is a flag whether the inner text field for setting effect parameter values are
+/// disabled.
 /// Opposed to the adding of components onto the created element, this flag exists so that the
 /// callers do not need to dig up the text field entities again.
 ///
@@ -360,7 +360,7 @@ fn create_pipeline_element(
     font: Handle<Font>,
     io_pad_mesh: Mesh2dHandle,
     (element_mesh, element_size): (Mesh2dHandle, ElementSize),
-    editable: bool,
+    template: bool,
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
     fn gray(c: Color) -> f32 {
@@ -467,7 +467,7 @@ fn create_pipeline_element(
                 mesh_assets,
                 &font,
             );
-            if editable {
+            if template {
                 cmds.entity(text_field)
                     .insert_bundle(InteractionBundle::default());
             }
