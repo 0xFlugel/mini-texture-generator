@@ -360,7 +360,7 @@ fn create_pipeline_element(
     font: Handle<Font>,
     io_pad_mesh: Mesh2dHandle,
     (element_mesh, element_size): (Mesh2dHandle, ElementSize),
-    editible: bool,
+    editable: bool,
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
     fn gray(c: Color) -> f32 {
@@ -467,7 +467,7 @@ fn create_pipeline_element(
                 mesh_assets,
                 &font,
             );
-            if editible {
+            if editable {
                 cmds.entity(text_field)
                     .insert_bundle(InteractionBundle::default());
             }
