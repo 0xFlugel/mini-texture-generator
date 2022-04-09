@@ -209,6 +209,9 @@ fn create_element(
             (mesh.clone(), *element_size),
             true,
         );
+        // The cloned effect is immediately in a dragging state. No new clicking needed.
+        // This is not done in the `create_pipeline_element` function based on the `editable` flag
+        // to not spread out logic and state definitions even further.
         cmds.entity(new)
             .insert(effect.clone())
             .insert(MyInteraction::Pressed)
@@ -342,6 +345,8 @@ fn setup(
 ///
 /// `editible` is a flag whether the inner text field for setting effect parameter values are
 /// enabled.
+/// Opposed to the adding of components onto the created element, this flag exists so that the
+/// callers do not need to dig up the text field entities again.
 ///
 /// # Note
 ///
