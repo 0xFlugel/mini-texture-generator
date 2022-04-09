@@ -19,6 +19,7 @@ mod text_entry;
 
 use crate::interaction::InteractionPlugin;
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
+use bevy::math::XY;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
@@ -52,6 +53,11 @@ const HIGHLIGHT_SCALING: f32 = 1.5;
 /// Number of pixels in each direction of the 2D texture.
 const TEXTURE_SIZE: u32 = 16;
 
+/// Global data defines. Used to make `create_image_entity` work with the same allocation size and
+/// interpretaion as `update_teture`.
+type PixelData = [f32; 4];
+const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
+
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
 
 fn main() {
@@ -71,60 +77,29 @@ fn main() {
 
 /// React to changes in connections and update the pipeline (i.e. texture generation function)
 /// accordingly.
-fn update_texture(
-    mut cmds: Commands,
-    mut mesh_assets: ResMut<Assets<Mesh>>,
-    mut material_assets: ResMut<Assets<ColorMaterial>>,
-    mut image_assets: ResMut<Assets<Image>>,
-    mut img: Local<Option<(Entity, Handle<Image>)>>,
-) {
-    let img = img.get_or_insert_with(|| {
-        let image = image_assets.add(Image::new(
-            Extent3d {
-                width: TEXTURE_SIZE,
-                height: TEXTURE_SIZE,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            std::iter::repeat(Color::GRAY.as_rgba_f32())
-                .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
-                .flatten()
-                .flat_map(f32::to_le_bytes)
-                .collect(),
-            TextureFormat::Rgba32Float,
-        ));
-        let entity = cmds
-            .spawn_bundle(ColorMesh2dBundle {
-                mesh: mesh_assets
-                    .add(Mesh::from(shape::Quad::new(Vec2::splat(2.0))))
-                    .into(),
-                material: material_assets.add(ColorMaterial {
-                    color: Color::WHITE,
-                    texture: Some(image.clone()),
-                }),
-                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 5.0))
-                    .with_scale(Vec3::new(200.0, 200.0, 1.0)),
-                ..Default::default()
-            })
-            .id();
-        (entity, image)
-    });
-    let image = image_assets.get_mut(img.1.clone()).unwrap();
-    let elem_size = size_of::<[f32; 4]>();
-    for x in 0..TEXTURE_SIZE {
-        for y in 0..TEXTURE_SIZE {
-            let offset = (y * TEXTURE_SIZE + x) as usize * elem_size;
-            let color = if ((x + y) % 2) == 0 {
-                Color::PURPLE
-            } else {
-                Color::BLACK
-            };
-            let data = color
-                .as_rgba_f32()
-                .into_iter()
-                .flat_map(f32::to_le_bytes)
-                .collect::<Vec<_>>();
-            image.data[offset..offset + elem_size].copy_from_slice(&data);
+fn update_texture(render_effects: Query<&Effect>, mut image_assets: ResMut<Assets<Image>>) {
+    const ELEM_SIZE: usize = size_of::<PixelData>();
+
+    fn write_pixel(img: &mut Image, at: XY<u32>, pixel: Color) {
+        let offset = (at.y * TEXTURE_SIZE + at.x) as usize * ELEM_SIZE;
+        let pixel = pixel
+            .as_rgba_f32()
+            .into_iter()
+            //TODO generalize. this is specific to my architecture, i think.
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        img.data[offset..offset + ELEM_SIZE].copy_from_slice(&pixel);
+    }
+
+    for effect in render_effects.iter() {
+        let image = match effect {
+            Effect::Rgba(Some(h)) | Effect::Hsva(Some(h)) | Effect::Gray(Some(h)) => {
+                image_assets.get_mut(h)
+            }
+            _ => None,
+        };
+        if let Some(mut image) = image {
+            todo!()
         }
     }
 }
@@ -146,6 +121,7 @@ fn create_element(
     mouse_position: Res<MousePosition>,
     windows: Res<Windows>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut image_assets: ResMut<Assets<Image>>,
     mut mesh_assets: ResMut<Assets<Mesh>>,
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
@@ -166,6 +142,7 @@ fn create_element(
         position: Vec3,
         mouse_position: MousePosition,
         materials: &mut Assets<ColorMaterial>,
+        image_assets: &mut Assets<Image>,
         mesh_assets: &mut Assets<Mesh>,
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
@@ -199,6 +176,7 @@ fn create_element(
             &label,
             (*material).clone(),
             materials,
+            image_assets,
             mesh_assets,
             position.truncate(),
             (*font).clone(),
@@ -235,6 +213,7 @@ fn create_element(
             position,
             *mouse_position,
             materials.as_mut(),
+            image_assets.as_mut(),
             mesh_assets.as_mut(),
             meshes.as_ref(),
             font.as_ref(),
@@ -246,8 +225,9 @@ fn create_element(
 /// Initialize ressources and the world.
 fn setup(
     mut cmds: Commands,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut material_assets: ResMut<Assets<ColorMaterial>>,
     mut mesh_assets: ResMut<Assets<Mesh>>,
+    mut image_assets: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
     windows: Res<Windows>,
 ) {
@@ -275,7 +255,7 @@ fn setup(
                 sidebar_width,
                 win_height,
             ))))),
-            material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
+            material: material_assets.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
             ..Default::default()
         })
         .insert(Sidebar)
@@ -315,8 +295,9 @@ fn setup(
             effect.clone(),
             &mut cmds,
             effect.name(),
-            materials.add(ColorMaterial::from(colors[i])),
-            materials.as_mut(),
+            material_assets.add(ColorMaterial::from(colors[i])),
+            material_assets.as_mut(),
+            image_assets.as_mut(),
             mesh_assets.as_mut(),
             Vec2::new(
                 0.0,
@@ -355,6 +336,7 @@ fn create_pipeline_element(
     label: &str,
     material: Handle<ColorMaterial>,
     materials: &mut Assets<ColorMaterial>,
+    image_assets: &mut Assets<Image>,
     mesh_assets: &mut Assets<Mesh>,
     translation: Vec2,
     font: Handle<Font>,
@@ -509,12 +491,33 @@ fn create_pipeline_element(
             outputs.push(id);
         }
     }
+
     cmds.entity(element)
         .push_children(&inputs)
         .push_children(&outputs)
         // Overwrite empty defaults with actual data.
         .insert(InputConnectors(inputs))
         .insert(OutputConnectors(outputs));
+
+    let add_texture_display = !template
+        && matches!(
+            effect,
+            Effect::Rgba(..) | Effect::Hsva(..) | Effect::Gray(..)
+        );
+    if add_texture_display {
+        let size = element_size.0.width;
+        let transform = Transform::from_translation(Vec3::new(
+            0.0,
+            // Put texture directly above the element.
+            element_size.0.height / 2.0 + size / 2.0,
+            // Raise the texture above all other elements as that is the central part of the entire
+            // program.
+            0.9,
+        ));
+        let texture =
+            create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
+        cmds.entity(element).add_child(texture);
+    }
 
     element
 }
@@ -598,20 +601,61 @@ fn create_text(
     .id()
 }
 
+/// Create an entity showing an image of a given square size.
+///
+/// # Note
+///
+/// All images are created as RGBA, even for GrayA [Effect]s.
+fn create_image_entity(
+    cmds: &mut Commands,
+    mesh_assets: &mut Assets<Mesh>,
+    material_assets: &mut Assets<ColorMaterial>,
+    image_assets: &mut Assets<Image>,
+    size: f32,
+    transform: Transform,
+) -> Entity {
+    let image = image_assets.add(Image::new(
+        Extent3d {
+            width: TEXTURE_SIZE,
+            height: TEXTURE_SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        std::iter::repeat(Color::GRAY.as_rgba_f32())
+            .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
+            .flatten()
+            .flat_map(f32::to_le_bytes)
+            .collect(),
+        TEXTURE_FORMAT,
+    ));
+    cmds.spawn_bundle(ColorMesh2dBundle {
+        mesh: mesh_assets
+            .add(Mesh::from(shape::Quad::new(Vec2::splat(size))))
+            .into(),
+        material: material_assets.add(ColorMaterial {
+            color: Color::WHITE,
+            texture: Some(image.clone()),
+        }),
+        transform,
+        ..Default::default()
+    })
+    .id()
+}
+
 #[derive(Debug, Clone, Component)]
 enum Effect {
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Rgba,
+    Rgba(Option<Handle<Image>>),
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Hsva,
+    Hsva(Option<Handle<Image>>),
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Gray,
+    Gray(Option<Handle<Image>>),
     /// Holds the constant value that is used for all sampled coordinates.
     Constant(f32),
     /// The value for an (X,Y) position is X.
@@ -641,9 +685,9 @@ impl Effect {
     /// A list of all variants.
     fn all() -> Vec<Self> {
         vec![
-            Self::Rgba,
-            Self::Hsva,
-            Self::Gray,
+            Self::Rgba(None),
+            Self::Hsva(None),
+            Self::Gray(None),
             Self::Constant(1.0),
             Self::LinearX,
             Self::Rotate(1.0),
@@ -655,9 +699,9 @@ impl Effect {
     /// A display name for each variant.
     fn name(&self) -> &str {
         match self {
-            Effect::Rgba => "RGBA",
-            Effect::Hsva => "HSVA",
-            Effect::Gray => "GRAY",
+            Effect::Rgba(..) => "RGBA",
+            Effect::Hsva(..) => "HSVA",
+            Effect::Gray(..) => "GRAY",
             Effect::Constant(..) => "Constant",
             Effect::LinearX => "X Gradient",
             Effect::Rotate(..) => "Rotate",
@@ -669,9 +713,9 @@ impl Effect {
     /// The number of input connections for the variant.
     fn inputs(&self) -> usize {
         match self {
-            Effect::Rgba => 4,
-            Effect::Hsva => 4,
-            Effect::Gray => 2,
+            Effect::Rgba(..) => 4,
+            Effect::Hsva(..) => 4,
+            Effect::Gray(..) => 2,
             Effect::Constant(..) => 0,
             Effect::LinearX => 0,
             Effect::Rotate(..) => 1,
@@ -683,9 +727,9 @@ impl Effect {
     /// The number of output connections for the variant.
     fn outputs(&self) -> usize {
         match self {
-            Effect::Rgba => 0,
-            Effect::Hsva => 0,
-            Effect::Gray => 0,
+            Effect::Rgba(..) => 0,
+            Effect::Hsva(..) => 0,
+            Effect::Gray(..) => 0,
             Effect::Constant(..) => 1,
             Effect::LinearX => 1,
             Effect::Rotate(..) => 1,
@@ -697,9 +741,9 @@ impl Effect {
     /// The names of internal parameters of each variant.
     fn controls(&self) -> &'static [&'static str] {
         match self {
-            Effect::Rgba => &[],
-            Effect::Hsva => &[],
-            Effect::Gray => &[],
+            Effect::Rgba(..) => &[],
+            Effect::Hsva(..) => &[],
+            Effect::Gray(..) => &[],
             Effect::Constant(..) => &["Value"],
             Effect::LinearX => &[],
             Effect::Rotate(..) => &["Angle"],
@@ -711,9 +755,9 @@ impl Effect {
     /// Return a unique number for each variant.
     fn ord(&self) -> usize {
         match self {
-            Effect::Rgba => 0,
-            Effect::Hsva => 1,
-            Effect::Gray => 2,
+            Effect::Rgba(..) => 0,
+            Effect::Hsva(..) => 1,
+            Effect::Gray(..) => 2,
             Effect::Constant(..) => 3,
             Effect::LinearX => 4,
             Effect::Rotate(..) => 5,
