@@ -600,13 +600,27 @@ fn create_text(
 
 #[derive(Debug, Clone, Component)]
 enum Effect {
+    /// Holds the entity that has a texture component which shows the generated texture.
+    ///
+    /// The sidebar (i.e. template) elements do not have a texture.
     Rgba,
+    /// Holds the entity that has a texture component which shows the generated texture.
+    ///
+    /// The sidebar (i.e. template) elements do not have a texture.
     Hsva,
+    /// Holds the entity that has a texture component which shows the generated texture.
+    ///
+    /// The sidebar (i.e. template) elements do not have a texture.
     Gray,
+    /// Holds the constant value that is used for all sampled coordinates.
     Constant(f32),
-    Identity,
+    /// The value for an (X,Y) position is X.
+    LinearX,
+    /// Holds an angle for rotating the coordinates for sampling.
     Rotate(f32),
+    /// Holds X and Y components offsetting the position for sampling.
     Offset(f32, f32),
+    /// Holds X and Y components for scaling the position for sampling.
     Scale(f32, f32),
 }
 
@@ -631,7 +645,7 @@ impl Effect {
             Self::Hsva,
             Self::Gray,
             Self::Constant(1.0),
-            Self::Identity,
+            Self::LinearX,
             Self::Rotate(1.0),
             Self::Offset(1.0, 1.0),
             Self::Scale(1.0, 1.0),
@@ -645,7 +659,7 @@ impl Effect {
             Effect::Hsva => "HSVA",
             Effect::Gray => "GRAY",
             Effect::Constant(..) => "Constant",
-            Effect::Identity => "Identity",
+            Effect::LinearX => "X Gradient",
             Effect::Rotate(..) => "Rotate",
             Effect::Offset(..) => "Offset",
             Effect::Scale(..) => "Scale",
@@ -659,7 +673,7 @@ impl Effect {
             Effect::Hsva => 4,
             Effect::Gray => 2,
             Effect::Constant(..) => 0,
-            Effect::Identity => 0,
+            Effect::LinearX => 0,
             Effect::Rotate(..) => 1,
             Effect::Offset(..) => 1,
             Effect::Scale(..) => 1,
@@ -673,7 +687,7 @@ impl Effect {
             Effect::Hsva => 0,
             Effect::Gray => 0,
             Effect::Constant(..) => 1,
-            Effect::Identity => 1,
+            Effect::LinearX => 1,
             Effect::Rotate(..) => 1,
             Effect::Offset(..) => 1,
             Effect::Scale(..) => 1,
@@ -687,7 +701,7 @@ impl Effect {
             Effect::Hsva => &[],
             Effect::Gray => &[],
             Effect::Constant(..) => &["Value"],
-            Effect::Identity => &[],
+            Effect::LinearX => &[],
             Effect::Rotate(..) => &["Angle"],
             Effect::Offset(..) => &["X", "Y"],
             Effect::Scale(..) => &["X", "Y"],
@@ -700,11 +714,11 @@ impl Effect {
             Effect::Rgba => 0,
             Effect::Hsva => 1,
             Effect::Gray => 2,
-            Effect::Constant(_) => 3,
-            Effect::Identity => 4,
-            Effect::Rotate(_) => 5,
-            Effect::Offset(_, _) => 6,
-            Effect::Scale(_, _) => 7,
+            Effect::Constant(..) => 3,
+            Effect::LinearX => 4,
+            Effect::Rotate(..) => 5,
+            Effect::Offset(..) => 6,
+            Effect::Scale(..) => 7,
         }
     }
 }
