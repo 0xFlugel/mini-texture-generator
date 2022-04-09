@@ -52,10 +52,7 @@ const HIGHLIGHT_SCALING: f32 = 1.5;
 /// Number of pixels in each direction of the 2D texture.
 const TEXTURE_SIZE: u32 = 16;
 
-//TODO Add a system that removes pipeline elements that are dropped over the sidebar.
-//TODO Add a system that moves overlapping pipeline elements away from each other.
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
-//TODO Implement scrolling through the sidebar with the mouse wheel.
 
 fn main() {
     App::new()
@@ -611,7 +608,6 @@ enum Effect {
     Rotate(f32),
     Offset(f32, f32),
     Scale(f32, f32),
-    //TODO add, mul, div, functions (all on values instead of positions).
 }
 
 /// Implement equality as being the same variant to be useful for [HashMap]s.
