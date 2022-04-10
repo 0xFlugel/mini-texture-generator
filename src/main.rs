@@ -179,9 +179,10 @@ fn update_texture(
         };
         if let Some(image) = image {
             let origin = Vec2::splat(TEXTURE_SIZE as f32 / 2.0);
+            let index_to_pixel_center_offset = Vec2::splat(0.5);
             for x in 0..TEXTURE_SIZE {
                 for y in 0..TEXTURE_SIZE {
-                    let at = Vec2::new(x as f32, y as f32) - origin;
+                    let at = Vec2::new(x as f32, y as f32) - origin + index_to_pixel_center_offset;
                     let inputs = inputs
                         .0
                         .iter()
