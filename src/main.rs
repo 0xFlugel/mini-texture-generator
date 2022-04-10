@@ -207,8 +207,8 @@ fn update_texture(
                         ),
                         Effect::Hsva(..) => Color::hsla(
                             inputs[0].unwrap_or(0.0),
-                            inputs[1].unwrap_or(0.0),
-                            inputs[2].unwrap_or(0.0),
+                            inputs[1].unwrap_or(1.0),
+                            inputs[2].unwrap_or(0.5),
                             inputs[3].unwrap_or(1.0),
                         ),
                         Effect::Gray(..) => Color::rgba(
