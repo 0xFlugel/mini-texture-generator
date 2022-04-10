@@ -86,7 +86,7 @@ impl TextEntryPlugin {
     /// Manipulates the text in the text field, according to keyboard input.
     fn change_text(
         mut text: Query<&mut TextValue>,
-        focus: ResMut<Focus>,
+        focus: Res<Focus>,
         mut input: EventReader<KeyboardInput>,
     ) {
         if let Some(focused) = &focus.0 {
