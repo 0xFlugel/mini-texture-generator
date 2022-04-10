@@ -132,7 +132,7 @@ fn update_texture(
         match effect {
             Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
             Effect::Constant(c) => Some(*c),
-            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32),
+            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
             Effect::Rotate(deg) => {
                 // Degrees is more human friendly.
                 let rad = deg / 360.0 * (2.0 * std::f32::consts::PI);
@@ -178,9 +178,11 @@ fn update_texture(
             _ => None,
         };
         if let Some(image) = image {
+            let origin = Vec2::splat(TEXTURE_SIZE as f32 / 2.0);
+            let index_to_pixel_center_offset = Vec2::splat(0.5);
             for x in 0..TEXTURE_SIZE {
                 for y in 0..TEXTURE_SIZE {
-                    let at = Vec2::new(x as f32, y as f32);
+                    let at = Vec2::new(x as f32, y as f32) - origin + index_to_pixel_center_offset;
                     let inputs = inputs
                         .0
                         .iter()
@@ -205,8 +207,8 @@ fn update_texture(
                         ),
                         Effect::Hsva(..) => Color::hsla(
                             inputs[0].unwrap_or(0.0),
-                            inputs[1].unwrap_or(0.0),
-                            inputs[2].unwrap_or(0.0),
+                            inputs[1].unwrap_or(1.0),
+                            inputs[2].unwrap_or(0.5),
                             inputs[3].unwrap_or(1.0),
                         ),
                         Effect::Gray(..) => Color::rgba(
