@@ -10,6 +10,7 @@ impl Plugin for TextEntryPlugin {
         app.add_system(TextEntryPlugin::set_focus)
             .add_system(TextEntryPlugin::tab_focus)
             .add_system(TextEntryPlugin::change_text)
+            .add_system(TextEntryPlugin::reparse_changed_text)
             .add_system(TextEntryPlugin::text_display)
             .add_system(TextEntryPlugin::update_bound_parameter)
             .insert_resource(Focus::default());
@@ -98,7 +99,6 @@ impl TextEntryPlugin {
                         ..
                     } = event
                     {
-                        let mut dirty = false;
                         let ch = match key_code {
                             KeyCode::Key1 | KeyCode::Numpad1 => Some('1'),
                             KeyCode::Key2 | KeyCode::Numpad2 => Some('2'),
@@ -117,21 +117,22 @@ impl TextEntryPlugin {
                             | KeyCode::NumpadComma => Some('.'),
                             KeyCode::Back | KeyCode::Delete => {
                                 text.text.pop();
-                                dirty = true;
                                 None
                             }
                             _ => None,
                         };
                         if let Some(ch) = ch {
                             text.text.push(ch);
-                            dirty = true;
-                        }
-                        if dirty {
-                            text.parsed = text.text.parse::<f32>().ok();
                         }
                     }
                 }
             }
+        }
+    }
+
+    fn reparse_changed_text(mut text_entries: Query<&mut TextValue, Changed<TextValue>>) {
+        for mut text in text_entries.iter_mut() {
+            text.parsed = text.text.parse::<f32>().ok();
         }
     }
 
