@@ -122,6 +122,7 @@ impl TextEntryPlugin {
                                 text.text.pop();
                                 None
                             }
+                            KeyCode::E => Some('e'),
                             _ => None,
                         };
                         if let Some(ch) = ch {
