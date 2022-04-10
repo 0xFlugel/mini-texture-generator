@@ -351,12 +351,12 @@ impl TextValue {
     }
 }
 
-/// The binding of a value manipulation GUI element, like a [TextFieldBundle], from/to an entities'
+/// The binding of a value manipulation GUI element, like a [crate::TextFieldBundle], from/to an entities'
 /// effect parameter.
 #[derive(Debug, Component)]
 pub(crate) struct ValueBinding {
-    /// The entity for which the [EffectType] is to be changed.
+    /// The entity for which the [Effect] is to be changed.
     pub(crate) entity: Entity,
-    /// The parameter of the [EffectType], if there are multiple.
+    /// The parameter of the `Effect`, if there are multiple.
     pub(crate) parameter_idx: usize,
 }

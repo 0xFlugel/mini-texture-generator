@@ -10,7 +10,8 @@ use bevy_mod_raycast::RayCastMesh;
 /// A system to start a [Connection] from an output connector to another pipeline element's input
 /// connector.
 ///
-/// The movement for the floating connector is given to the [dragging] system.
+/// The movement for the floating connector is given to the
+/// [crate::interaction::InteractionPlugin::dragging] system.
 #[allow(clippy::type_complexity)]
 pub(crate) fn start_connecting(
     mut cmds: Commands,
@@ -202,8 +203,7 @@ pub(crate) fn highlight_connection_acceptor(
     }
 }
 
-/// Stop dragging the floating connector, causing the pipeline data structure to change via the
-/// [pipeline_update] system.
+/// Stop dragging the floating connector and drop the connection on the connector below.
 pub(crate) fn finish_connection(
     mut cmds: Commands,
     dropped_floating: Query<(Entity, &FloatingConnector), Without<Dragging>>,
@@ -413,7 +413,7 @@ pub(crate) struct FloatingConnectorBundle {
 pub(crate) struct ConnectionBundle {
     /// The essential data that is manipulated by user interactions.
     connection: Connection,
-    /// Should be generated via [VerticalSpline].
+    /// Should be generated via [gen_line].
     mesh: Mesh2dHandle,
     material: Handle<ColorMaterial>,
     transform: Transform,
