@@ -132,7 +132,7 @@ fn update_texture(
         match effect {
             Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
             Effect::Constant(c) => Some(*c),
-            Effect::LinearX => Some(at.x as _),
+            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32),
             Effect::Rotate(angle) => {
                 let rotation = Transform::from_rotation(Quat::from_rotation_z(*angle));
                 let at = (rotation * at.extend(1.0)).truncate();
