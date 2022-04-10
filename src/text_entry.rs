@@ -1,4 +1,4 @@
-use crate::{EffectType, MyInteraction};
+use crate::{Effect, MyInteraction};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -17,6 +17,7 @@ impl Plugin for TextEntryPlugin {
 
 impl TextEntryPlugin {
     /// Sets the text entry focus based on [MyInteraction]s.
+    #[allow(clippy::type_complexity)]
     fn set_focus(
         interactions: Query<(Entity, &MyInteraction), (Changed<MyInteraction>, With<TextValue>)>,
         defocus_interactions: Query<&MyInteraction, (Changed<MyInteraction>, Without<TextValue>)>,
@@ -106,7 +107,7 @@ impl TextEntryPlugin {
     /// Manipulates effect parameters based on changes to the text in text fields.
     fn update_bound_parameter(
         text: Query<(&TextValue, &ValueBinding), Changed<TextValue>>,
-        mut params: Query<&mut EffectType>,
+        mut params: Query<&mut Effect>,
     ) {
         for (
             TextValue { parsed, .. },
@@ -116,19 +117,19 @@ impl TextEntryPlugin {
             },
         ) in text.iter()
         {
-            if let Some(parsed) = parsed.clone() {
+            if let Some(parsed) = *parsed {
                 match params.get_mut(*entity) {
                     Ok(mut effect) => match effect.as_mut() {
-                        &mut EffectType::Constant(ref mut value) => *value = parsed,
-                        &mut EffectType::Rotate(ref mut angle) => *angle = parsed,
-                        &mut EffectType::Offset(ref mut x, ref mut y) => {
+                        Effect::Constant(ref mut value) => *value = parsed,
+                        Effect::Rotate(ref mut angle) => *angle = parsed,
+                        Effect::Offset(ref mut x, ref mut y) => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {
                                 *y = parsed
                             }
                         }
-                        &mut EffectType::Scale(ref mut x, ref mut y) => {
+                        Effect::Scale(ref mut x, ref mut y) => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {

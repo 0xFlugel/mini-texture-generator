@@ -17,11 +17,15 @@ mod connection_management;
 mod interaction;
 mod text_entry;
 
+use crate::connection_management::Connection;
 use crate::interaction::InteractionPlugin;
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
+use bevy::ecs::event::{Events, ManualEventReader};
+use bevy::math::XY;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
+use bevy::utils::HashSet;
 use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
@@ -52,10 +56,12 @@ const HIGHLIGHT_SCALING: f32 = 1.5;
 /// Number of pixels in each direction of the 2D texture.
 const TEXTURE_SIZE: u32 = 16;
 
-//TODO Add a system that removes pipeline elements that are dropped over the sidebar.
-//TODO Add a system that moves overlapping pipeline elements away from each other.
+/// Global data defines. Used to make `create_image_entity` work with the same allocation size and
+/// interpretaion as `update_teture`.
+type PixelData = [f32; 4];
+const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
+
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
-//TODO Implement scrolling through the sidebar with the mouse wheel.
 
 fn main() {
     App::new()
@@ -69,65 +75,205 @@ fn main() {
         .add_system(connection_management::highlight_connection_acceptor)
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
+        .add_system(image_modified_detection)
         .run();
 }
 
 /// React to changes in connections and update the pipeline (i.e. texture generation function)
 /// accordingly.
 fn update_texture(
-    mut cmds: Commands,
-    mut mesh_assets: ResMut<Assets<Mesh>>,
-    mut material_assets: ResMut<Assets<ColorMaterial>>,
+    effects: Query<(&Effect, &InputConnectors), Without<SidebarElement>>,
+    connections: Query<&Connection>,
+    input_connectors: Query<&InputConnector>,
+    parents: Query<&Parent>,
     mut image_assets: ResMut<Assets<Image>>,
-    mut img: Local<Option<(Entity, Handle<Image>)>>,
 ) {
-    let img = img.get_or_insert_with(|| {
-        let image = image_assets.add(Image::new(
-            Extent3d {
-                width: TEXTURE_SIZE,
-                height: TEXTURE_SIZE,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            std::iter::repeat(Color::GRAY.as_rgba_f32())
-                .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
-                .flatten()
-                .flat_map(f32::to_le_bytes)
-                .collect(),
-            TextureFormat::Rgba32Float,
-        ));
-        let entity = cmds
-            .spawn_bundle(ColorMesh2dBundle {
-                mesh: mesh_assets
-                    .add(Mesh::from(shape::Quad::new(Vec2::splat(2.0))))
-                    .into(),
-                material: material_assets.add(ColorMaterial {
-                    color: Color::WHITE,
-                    texture: Some(image.clone()),
-                }),
-                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 5.0))
-                    .with_scale(Vec3::new(200.0, 200.0, 1.0)),
-                ..Default::default()
-            })
-            .id();
-        (entity, image)
-    });
-    let image = image_assets.get_mut(img.1.clone()).unwrap();
-    let elem_size = size_of::<[f32; 4]>();
-    for x in 0..TEXTURE_SIZE {
-        for y in 0..TEXTURE_SIZE {
-            let offset = (y * TEXTURE_SIZE + x) as usize * elem_size;
-            let color = if ((x + y) % 2) == 0 {
-                Color::PURPLE
+    const ELEM_SIZE: usize = size_of::<PixelData>();
+
+    fn write_pixel(img: &mut Image, at: XY<u32>, pixel: Color) {
+        let offset = (at.y * TEXTURE_SIZE + at.x) as usize * ELEM_SIZE;
+        let pixel = pixel
+            .as_rgba_f32()
+            .into_iter()
+            //TODO generalize. this is specific to my architecture, i think.
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        img.data[offset..offset + ELEM_SIZE].copy_from_slice(&pixel);
+    }
+    /// Calculates a single-channel color value recursively.
+    ///
+    /// # Parameter
+    ///
+    /// `at` is the coordinate to sample the input at.
+    ///
+    /// `connection` is the [Connection] entity for which to calculate the single-channel color
+    /// value.
+    ///
+    /// # Return
+    ///
+    /// `Some` color value, or `None` if any entity resolution failed.
+    fn calc(
+        at: Vec2,
+        input_connector: Entity,
+        effects: &Query<(&Effect, &InputConnectors), Without<SidebarElement>>,
+        connections: &Query<&Connection>,
+        input_connectors: &Query<&InputConnector>,
+        parents: &Query<&Parent>,
+    ) -> Option<f32> {
+        let connection = input_connectors.get(input_connector).ok()?.0?;
+        let output_connector = connections
+            .get(connection)
+            .ok()
+            .unwrap()
+            .output_connector
+            .entity();
+        let previous = parents.get(output_connector).ok().unwrap().0;
+        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok().unwrap();
+        match effect {
+            Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
+            Effect::Constant(c) => Some(*c),
+            Effect::LinearX => Some(at.x as _),
+            Effect::Rotate(angle) => {
+                let rotation = Transform::from_rotation(Quat::from_rotation_z(*angle));
+                let at = (rotation * at.extend(1.0)).truncate();
+                calc(
+                    at,
+                    inputs.0[0],
+                    effects,
+                    connections,
+                    input_connectors,
+                    parents,
+                )
+            }
+            Effect::Offset(x, y) => calc(
+                at + Vec2::new(*x, *y),
+                inputs.0[0],
+                effects,
+                connections,
+                input_connectors,
+                parents,
+            ),
+            Effect::Scale(x, y) => calc(
+                at * Vec2::new(*x, *y),
+                inputs.0[0],
+                effects,
+                connections,
+                input_connectors,
+                parents,
+            ),
+        }
+    }
+
+    for (effect, inputs) in effects.iter() {
+        let image = match effect {
+            Effect::Rgba(Some(h)) | Effect::Hsva(Some(h)) | Effect::Gray(Some(h)) => {
+                image_assets.get_mut(h)
+            }
+            Effect::Rgba(None) | Effect::Hsva(None) | Effect::Gray(None) => {
+                eprintln!("Consumer does not have a display.");
+                None
+            }
+            _ => None,
+        };
+        if let Some(image) = image {
+            for x in 0..TEXTURE_SIZE {
+                for y in 0..TEXTURE_SIZE {
+                    let at = Vec2::new(x as f32, y as f32);
+                    let inputs = inputs
+                        .0
+                        .iter()
+                        .map(|input_connector| {
+                            calc(
+                                at,
+                                *input_connector,
+                                &effects,
+                                &connections,
+                                &input_connectors,
+                                &parents,
+                            )
+                            .unwrap_or(0.0)
+                        })
+                        .collect::<Vec<_>>();
+                    let color = match effect {
+                        Effect::Rgba(..) => Color::rgba(inputs[0], inputs[1], inputs[2], inputs[3]),
+                        Effect::Hsva(..) => Color::hsla(inputs[0], inputs[1], inputs[2], inputs[3]),
+                        Effect::Gray(..) => Color::rgba(inputs[0], inputs[0], inputs[0], inputs[1]),
+                        _ => unreachable!(),
+                    };
+                    write_pixel(image, XY { x, y }, color);
+                }
+            }
+        }
+    }
+}
+
+/// Update all [ColorMaterial]s when their [Image] was modified.
+///
+/// This is currently not done automatically by Bevy
+/// ([which is a bug](https://github.com/bevyengine/bevy/pull/3737)). Code copied from the link.
+///
+/// Whenever an [Image] is modified, if it is referenced by a [ColorMaterial]
+/// we need to trigger an [AssetEvent::Modified] for the [ColorMaterial]
+/// so that extract_render_assets detects it and calls for a new extraction
+fn image_modified_detection(
+    mut image_to_material: Local<HashMap<Handle<Image>, HashSet<Handle<ColorMaterial>>>>,
+    mut image_events: EventReader<AssetEvent<Image>>,
+    materials: Res<Assets<ColorMaterial>>,
+    mut material_events_reader: Local<ManualEventReader<AssetEvent<ColorMaterial>>>,
+    mut material_events: ResMut<Events<AssetEvent<ColorMaterial>>>,
+) {
+    // Keep the image_to_materials HashMap almost up to date.
+    // When a `ColorMaterial` is modified we don't remove it from its previous image entry in the HashMap
+    // thus we handle an `outdated` HashSet during modified_images iteration.
+    for event in material_events_reader.iter(&material_events) {
+        match event {
+            AssetEvent::Created { handle } | AssetEvent::Modified { handle } => {
+                if let Some(image) = materials.get(handle).and_then(|mat| mat.texture.as_ref()) {
+                    image_to_material
+                        .entry(image.clone_weak())
+                        .or_default()
+                        .insert(handle.clone_weak());
+                }
+            }
+            AssetEvent::Removed { handle } => {
+                if let Some(image) = materials.get(handle).and_then(|mat| mat.texture.as_ref()) {
+                    image_to_material
+                        .entry(image.clone_weak())
+                        .or_default()
+                        .remove(handle);
+                }
+            }
+        }
+    }
+    let modified_images = image_events
+        .iter()
+        .filter_map(|event| {
+            if let AssetEvent::Modified { handle } = event {
+                Some(handle)
             } else {
-                Color::BLACK
-            };
-            let data = color
-                .as_rgba_f32()
-                .into_iter()
-                .flat_map(f32::to_le_bytes)
-                .collect::<Vec<_>>();
-            image.data[offset..offset + elem_size].copy_from_slice(&data);
+                None
+            }
+        })
+        .collect::<HashSet<_>>();
+    if !modified_images.is_empty() {
+        for image in modified_images.iter() {
+            if let Some(material_handles) = image_to_material.get_mut(image) {
+                let mut outdated = HashSet::default();
+                for material_handle in material_handles.iter() {
+                    if Some(*image)
+                        == materials
+                            .get(material_handle)
+                            .and_then(|mat| mat.texture.as_ref())
+                    {
+                        material_events.send(AssetEvent::Modified {
+                            handle: material_handle.clone_weak(),
+                        })
+                    } else {
+                        outdated.insert(material_handle.clone_weak());
+                    }
+                }
+                *material_handles = &*material_handles - &outdated;
+            }
         }
     }
 }
@@ -149,6 +295,7 @@ fn create_element(
     mouse_position: Res<MousePosition>,
     windows: Res<Windows>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut image_assets: ResMut<Assets<Image>>,
     mut mesh_assets: ResMut<Assets<Mesh>>,
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
@@ -169,6 +316,7 @@ fn create_element(
         position: Vec3,
         mouse_position: MousePosition,
         materials: &mut Assets<ColorMaterial>,
+        image_assets: &mut Assets<Image>,
         mesh_assets: &mut Assets<Mesh>,
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
@@ -197,20 +345,23 @@ fn create_element(
             });
         let io_pad_mesh = meshes.get(&MyMeshes::IoConnector).unwrap().clone();
         let new = create_pipeline_element(
-            effect.clone(),
+            effect,
             cmds,
             &label,
             (*material).clone(),
             materials,
+            image_assets,
             mesh_assets,
             position.truncate(),
             (*font).clone(),
             io_pad_mesh,
             (mesh.clone(), *element_size),
-            true,
+            false,
         );
+        // The cloned effect is immediately in a dragging state. No new clicking needed.
+        // This is not done in the `create_pipeline_element` function based on the `template` flag
+        // to not spread out logic and state definitions even further.
         cmds.entity(new)
-            .insert(effect.clone())
             .insert(MyInteraction::Pressed)
             .insert(Draggable)
             .insert(Dragging {
@@ -235,6 +386,7 @@ fn create_element(
             position,
             *mouse_position,
             materials.as_mut(),
+            image_assets.as_mut(),
             mesh_assets.as_mut(),
             meshes.as_ref(),
             font.as_ref(),
@@ -246,8 +398,9 @@ fn create_element(
 /// Initialize ressources and the world.
 fn setup(
     mut cmds: Commands,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut material_assets: ResMut<Assets<ColorMaterial>>,
     mut mesh_assets: ResMut<Assets<Mesh>>,
+    mut image_assets: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
     windows: Res<Windows>,
 ) {
@@ -275,7 +428,7 @@ fn setup(
                 sidebar_width,
                 win_height,
             ))))),
-            material: materials.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
+            material: material_assets.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
             ..Default::default()
         })
         .insert(Sidebar)
@@ -301,7 +454,7 @@ fn setup(
     // per parameter field. Starting at to have them vertically centered instead of touching the
     // border above or below.
     let mut line_offset = 1;
-    for (i, effect) in EffectType::all().iter().enumerate() {
+    for (i, effect) in Effect::all().iter().enumerate() {
         let this_lines = effect.controls().len() + 3;
         let height = LINE_HEIGHT * this_lines as f32;
         let width = 0.6 * sidebar_width;
@@ -312,11 +465,12 @@ fn setup(
         mesh_cache.insert(MyMeshes::from(effect), element_mesh.clone());
 
         let child = create_pipeline_element(
-            effect.clone(),
+            &effect,
             &mut cmds,
             effect.name(),
-            materials.add(ColorMaterial::from(colors[i])),
-            materials.as_mut(),
+            material_assets.add(ColorMaterial::from(colors[i])),
+            material_assets.as_mut(),
+            image_assets.as_mut(),
             mesh_assets.as_mut(),
             Vec2::new(
                 0.0,
@@ -325,7 +479,7 @@ fn setup(
             font.clone(),
             io_pad_mesh.clone(),
             (element_mesh, ElementSize(Size::new(width, height))),
-            false,
+            true,
         );
         cmds.entity(child).insert(SidebarElement(effect.clone()));
         cmds.entity(sidebar).add_child(child);
@@ -340,25 +494,28 @@ fn setup(
 ///
 /// # Parameter
 ///
-/// `editible` is a flag whether the inner text field for setting effect parameter values are
-/// enabled.
+/// `template` is a flag whether the inner text field for setting effect parameter values are
+/// disabled.
+/// Opposed to the adding of components onto the created element, this flag exists so that the
+/// callers do not need to dig up the text field entities again.
 ///
 /// # Note
 ///
 /// The element is interactive but not tagged as a sidebar element or a active pipeline part.
 #[allow(clippy::too_many_arguments)]
 fn create_pipeline_element(
-    effect: EffectType,
+    effect: &Effect,
     cmds: &mut Commands,
     label: &str,
     material: Handle<ColorMaterial>,
     materials: &mut Assets<ColorMaterial>,
+    image_assets: &mut Assets<Image>,
     mesh_assets: &mut Assets<Mesh>,
     translation: Vec2,
     font: Handle<Font>,
     io_pad_mesh: Mesh2dHandle,
     (element_mesh, element_size): (Mesh2dHandle, ElementSize),
-    editible: bool,
+    template: bool,
 ) -> Entity {
     /// Calculates the human visual brightness values of a color.
     fn gray(c: Color) -> f32 {
@@ -394,6 +551,39 @@ fn create_pipeline_element(
         id
     }
 
+    // Create the texture display above the consuming pipeline elements.
+    let add_texture_display = !template
+        && matches!(
+            effect,
+            Effect::Rgba(..) | Effect::Hsva(..) | Effect::Gray(..)
+        );
+    let (effect, texture) = if add_texture_display {
+        let size = element_size.0.width;
+        let transform = Transform::from_translation(Vec3::new(
+            0.0,
+            // Put texture directly above the element.
+            element_size.0.height / 2.0 + size / 2.0,
+            // Raise the texture above all other elements as that is the central part of the entire
+            // program.
+            0.9,
+        ));
+        let (texture, image_handle) =
+            create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
+        let linked = match effect {
+            Effect::Rgba(_) => Effect::Rgba(Some(image_handle)),
+            Effect::Hsva(_) => Effect::Hsva(Some(image_handle)),
+            Effect::Gray(_) => Effect::Gray(Some(image_handle)),
+            Effect::Constant(..)
+            | Effect::LinearX
+            | Effect::Rotate(..)
+            | Effect::Offset(..)
+            | Effect::Scale(..) => unreachable!(),
+        };
+        (linked, Some(texture))
+    } else {
+        (effect.clone(), None)
+    };
+
     // Create main (clickable) box.
     let element = cmds
         .spawn_bundle(PipelineElementBundle {
@@ -408,6 +598,9 @@ fn create_pipeline_element(
             interaction: InteractionBundle::default(),
         })
         .id();
+    if let Some(texture) = texture {
+        cmds.entity(element).add_child(texture);
+    }
     let text_color = {
         let background = materials
             .get(material)
@@ -465,7 +658,7 @@ fn create_pipeline_element(
                 mesh_assets,
                 &font,
             );
-            if editible {
+            if template {
                 cmds.entity(text_field)
                     .insert_bundle(InteractionBundle::default());
             }
@@ -507,6 +700,7 @@ fn create_pipeline_element(
             outputs.push(id);
         }
     }
+
     cmds.entity(element)
         .push_children(&inputs)
         .push_children(&outputs)
@@ -596,41 +790,97 @@ fn create_text(
     .id()
 }
 
+/// Create an entity showing an image of a given square size.
+///
+/// # Note
+///
+/// All images are created as RGBA, even for GrayA [Effect]s.
+fn create_image_entity(
+    cmds: &mut Commands,
+    mesh_assets: &mut Assets<Mesh>,
+    material_assets: &mut Assets<ColorMaterial>,
+    image_assets: &mut Assets<Image>,
+    size: f32,
+    transform: Transform,
+) -> (Entity, Handle<Image>) {
+    let handle = image_assets.add(Image::new(
+        Extent3d {
+            width: TEXTURE_SIZE,
+            height: TEXTURE_SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        std::iter::repeat(Color::GRAY.as_rgba_f32())
+            .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
+            .flatten()
+            .flat_map(f32::to_le_bytes)
+            .collect(),
+        TEXTURE_FORMAT,
+    ));
+    let image = cmds
+        .spawn_bundle(ColorMesh2dBundle {
+            mesh: mesh_assets
+                .add(Mesh::from(shape::Quad::new(Vec2::splat(size))))
+                .into(),
+            material: material_assets.add(ColorMaterial {
+                color: Color::WHITE,
+                texture: Some(handle.clone()),
+            }),
+            transform,
+            ..Default::default()
+        })
+        .id();
+    (image, handle)
+}
+
 #[derive(Debug, Clone, Component)]
-enum EffectType {
-    Rgba,
-    Hsva,
-    Gray,
+enum Effect {
+    /// Holds the entity that has a texture component which shows the generated texture.
+    ///
+    /// The sidebar (i.e. template) elements do not have a texture.
+    Rgba(Option<Handle<Image>>),
+    /// Holds the entity that has a texture component which shows the generated texture.
+    ///
+    /// The sidebar (i.e. template) elements do not have a texture.
+    Hsva(Option<Handle<Image>>),
+    /// Holds the entity that has a texture component which shows the generated texture.
+    ///
+    /// The sidebar (i.e. template) elements do not have a texture.
+    Gray(Option<Handle<Image>>),
+    /// Holds the constant value that is used for all sampled coordinates.
     Constant(f32),
-    Identity,
+    /// The value for an (X,Y) position is X.
+    LinearX,
+    /// Holds an angle for rotating the coordinates for sampling.
     Rotate(f32),
+    /// Holds X and Y components offsetting the position for sampling.
     Offset(f32, f32),
+    /// Holds X and Y components for scaling the position for sampling.
     Scale(f32, f32),
-    //TODO add, mul, div, functions (all on values instead of positions).
 }
 
 /// Implement equality as being the same variant to be useful for [HashMap]s.
-impl PartialEq for EffectType {
+impl PartialEq for Effect {
     fn eq(&self, other: &Self) -> bool {
         self.ord() == other.ord()
     }
 }
-impl Eq for EffectType {}
-impl Hash for EffectType {
+impl Eq for Effect {}
+impl Hash for Effect {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_usize(self.ord());
     }
 }
 
-impl EffectType {
+impl Effect {
     /// A list of all variants.
     fn all() -> Vec<Self> {
         vec![
-            Self::Rgba,
-            Self::Hsva,
-            Self::Gray,
+            Self::Rgba(None),
+            Self::Hsva(None),
+            Self::Gray(None),
             Self::Constant(1.0),
-            Self::Identity,
+            Self::LinearX,
             Self::Rotate(1.0),
             Self::Offset(1.0, 1.0),
             Self::Scale(1.0, 1.0),
@@ -640,70 +890,70 @@ impl EffectType {
     /// A display name for each variant.
     fn name(&self) -> &str {
         match self {
-            EffectType::Rgba => "RGBA",
-            EffectType::Hsva => "HSVA",
-            EffectType::Gray => "GRAY",
-            EffectType::Constant(..) => "Constant",
-            EffectType::Identity => "Identity",
-            EffectType::Rotate(..) => "Rotate",
-            EffectType::Offset(..) => "Offset",
-            EffectType::Scale(..) => "Scale",
+            Effect::Rgba(..) => "RGBA",
+            Effect::Hsva(..) => "HSVA",
+            Effect::Gray(..) => "GRAY",
+            Effect::Constant(..) => "Constant",
+            Effect::LinearX => "X Gradient",
+            Effect::Rotate(..) => "Rotate",
+            Effect::Offset(..) => "Offset",
+            Effect::Scale(..) => "Scale",
         }
     }
 
     /// The number of input connections for the variant.
     fn inputs(&self) -> usize {
         match self {
-            EffectType::Rgba => 4,
-            EffectType::Hsva => 4,
-            EffectType::Gray => 2,
-            EffectType::Constant(..) => 0,
-            EffectType::Identity => 0,
-            EffectType::Rotate(..) => 1,
-            EffectType::Offset(..) => 1,
-            EffectType::Scale(..) => 1,
+            Effect::Rgba(..) => 4,
+            Effect::Hsva(..) => 4,
+            Effect::Gray(..) => 2,
+            Effect::Constant(..) => 0,
+            Effect::LinearX => 0,
+            Effect::Rotate(..) => 1,
+            Effect::Offset(..) => 1,
+            Effect::Scale(..) => 1,
         }
     }
 
     /// The number of output connections for the variant.
     fn outputs(&self) -> usize {
         match self {
-            EffectType::Rgba => 0,
-            EffectType::Hsva => 0,
-            EffectType::Gray => 0,
-            EffectType::Constant(..) => 1,
-            EffectType::Identity => 1,
-            EffectType::Rotate(..) => 1,
-            EffectType::Offset(..) => 1,
-            EffectType::Scale(..) => 1,
+            Effect::Rgba(..) => 0,
+            Effect::Hsva(..) => 0,
+            Effect::Gray(..) => 0,
+            Effect::Constant(..) => 1,
+            Effect::LinearX => 1,
+            Effect::Rotate(..) => 1,
+            Effect::Offset(..) => 1,
+            Effect::Scale(..) => 1,
         }
     }
 
     /// The names of internal parameters of each variant.
     fn controls(&self) -> &'static [&'static str] {
         match self {
-            EffectType::Rgba => &[],
-            EffectType::Hsva => &[],
-            EffectType::Gray => &[],
-            EffectType::Constant(..) => &["Value"],
-            EffectType::Identity => &[],
-            EffectType::Rotate(..) => &["Angle"],
-            EffectType::Offset(..) => &["X", "Y"],
-            EffectType::Scale(..) => &["X", "Y"],
+            Effect::Rgba(..) => &[],
+            Effect::Hsva(..) => &[],
+            Effect::Gray(..) => &[],
+            Effect::Constant(..) => &["Value"],
+            Effect::LinearX => &[],
+            Effect::Rotate(..) => &["Angle"],
+            Effect::Offset(..) => &["X", "Y"],
+            Effect::Scale(..) => &["X", "Y"],
         }
     }
 
     /// Return a unique number for each variant.
     fn ord(&self) -> usize {
         match self {
-            EffectType::Rgba => 0,
-            EffectType::Hsva => 1,
-            EffectType::Gray => 2,
-            EffectType::Constant(_) => 3,
-            EffectType::Identity => 4,
-            EffectType::Rotate(_) => 5,
-            EffectType::Offset(_, _) => 6,
-            EffectType::Scale(_, _) => 7,
+            Effect::Rgba(..) => 0,
+            Effect::Hsva(..) => 1,
+            Effect::Gray(..) => 2,
+            Effect::Constant(..) => 3,
+            Effect::LinearX => 4,
+            Effect::Rotate(..) => 5,
+            Effect::Offset(..) => 6,
+            Effect::Scale(..) => 7,
         }
     }
 }
@@ -711,26 +961,26 @@ impl EffectType {
 /// IDs for the Mesh2dHandle cache resource.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum MyMeshes {
-    EffectType(EffectType),
+    EffectType(Effect),
     IoConnector,
 }
 
-impl From<&EffectType> for MyMeshes {
-    fn from(e: &EffectType) -> Self {
+impl From<&Effect> for MyMeshes {
+    fn from(e: &Effect) -> Self {
         Self::EffectType(e.clone())
     }
 }
 
 /// A marker for being a template in the sidebar, instead of an interactive pipeline element.
 #[derive(Debug, Component)]
-struct SidebarElement(EffectType);
+struct SidebarElement(Effect);
 
 /// A marker for being the sidebar, the parent of the sidebar elements.
 #[derive(Debug, Component)]
 struct Sidebar;
 
 impl Deref for SidebarElement {
-    type Target = EffectType;
+    type Target = Effect;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -740,7 +990,7 @@ impl Deref for SidebarElement {
 /// A bundle for creating a full pipeline element entity.
 #[derive(Bundle)]
 struct PipelineElementBundle {
-    effect: EffectType,
+    effect: Effect,
     size: ElementSize,
     #[bundle]
     interaction: InteractionBundle,

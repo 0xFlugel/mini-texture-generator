@@ -346,8 +346,8 @@ pub(crate) struct FloatingConnector {
 /// dragging a connection to a new connector.
 #[derive(Debug, Component)]
 pub(crate) struct Connection {
-    output_connector: ConnectionAttachment,
-    input_connector: ConnectionAttachment,
+    pub(crate) output_connector: ConnectionAttachment,
+    pub(crate) input_connector: ConnectionAttachment,
 }
 
 /// A helper type for naming the variants of entities a connection can be attached to.
@@ -358,7 +358,7 @@ pub(crate) enum ConnectionAttachment {
 }
 
 impl ConnectionAttachment {
-    fn entity(&self) -> Entity {
+    pub(crate) fn entity(&self) -> Entity {
         match self {
             ConnectionAttachment::Connector(e) | ConnectionAttachment::Floating(e) => *e,
         }
