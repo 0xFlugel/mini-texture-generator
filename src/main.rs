@@ -114,15 +114,21 @@ fn update_texture(
     /// `Some` color value, or `None` if any entity resolution failed.
     fn calc(
         at: Vec2,
-        connection: Entity,
+        input_connector: Entity,
         effects: &Query<(&Effect, &InputConnectors), Without<SidebarElement>>,
         connections: &Query<&Connection>,
         input_connectors: &Query<&InputConnector>,
         parents: &Query<&Parent>,
     ) -> Option<f32> {
-        let output_connector = connections.get(connection).ok()?.output_connector.entity();
-        let previous = parents.get(output_connector).ok()?.0;
-        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok()?;
+        let connection = input_connectors.get(input_connector).ok()?.0?;
+        let output_connector = connections
+            .get(connection)
+            .ok()
+            .unwrap()
+            .output_connector
+            .entity();
+        let previous = parents.get(output_connector).ok().unwrap().0;
+        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok().unwrap();
         match effect {
             Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
             Effect::Constant(c) => Some(*c),
@@ -176,10 +182,10 @@ fn update_texture(
                     let inputs = inputs
                         .0
                         .iter()
-                        .map(|connection| {
+                        .map(|input_connector| {
                             calc(
                                 at,
-                                *connection,
+                                *input_connector,
                                 &effects,
                                 &connections,
                                 &input_connectors,
