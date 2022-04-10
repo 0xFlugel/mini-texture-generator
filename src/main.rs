@@ -133,8 +133,10 @@ fn update_texture(
             Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
             Effect::Constant(c) => Some(*c),
             Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32),
-            Effect::Rotate(angle) => {
-                let rotation = Transform::from_rotation(Quat::from_rotation_z(*angle));
+            Effect::Rotate(deg) => {
+                // Degrees is more human friendly.
+                let rad = deg / 360.0 * (2.0 * std::f32::consts::PI);
+                let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
                 let at = (rotation * at.extend(1.0)).truncate();
                 calc(
                     at,
