@@ -453,16 +453,7 @@ fn setup(
         .insert(Sidebar)
         .id();
 
-    let colors = [
-        Color::AQUAMARINE,
-        Color::BLUE,
-        Color::DARK_GRAY,
-        Color::GREEN,
-        Color::PURPLE,
-        Color::TOMATO,
-        Color::VIOLET,
-        Color::YELLOW_GREEN,
-    ];
+    let colors = gen_colors(Effect::all().len());
 
     let mut mesh_cache = HashMap::new();
     let io_pad_mesh =
@@ -507,6 +498,21 @@ fn setup(
     }
 
     cmds.insert_resource(mesh_cache);
+}
+
+/// Generates `n` colors with the highest average difference.
+fn gen_colors(n: usize) -> Vec<Color> {
+    (0..n)
+        // Map to evenly spread out hue and 0.25, 0.5 nad 0.75 lightness.
+        .map(|i| {
+            Color::hsla(
+                i as f32 / n as f32 * 360.0,
+                1.0,
+                1.0 - ((i % 3) as f32 + 1.0) / 4.0,
+                1.0,
+            )
+        })
+        .collect()
 }
 
 /// Create new new entity that is a pipeline element.
