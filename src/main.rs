@@ -138,31 +138,35 @@ fn update_texture(
                 let rad = deg / 360.0 * (2.0 * std::f32::consts::PI);
                 let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
                 let at = (rotation * at.extend(1.0)).truncate();
+                at
+            }
+            Effect::Offset { x, y } => at + Vec2::new(*x, *y),
+            Effect::Scale { x, y } => at * Vec2::new(*x, *y),
+        };
+
+        let calculated_inputs = inputs
+            .0
+            .iter()
+            .copied()
+            .map(|input: Entity| {
                 calc(
-                    at,
-                    inputs.0[0],
+                    transformed_at,
+                    input,
                     effects,
                     connections,
                     input_connectors,
                     parents,
                 )
+            })
+            .collect::<Vec<_>>();
+
+        match effect {
+            Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => {
+                unreachable!()
             }
-            Effect::Offset(x, y) => calc(
-                at + Vec2::new(*x, *y),
-                inputs.0[0],
-                effects,
-                connections,
-                input_connectors,
-                parents,
-            ),
-            Effect::Scale(x, y) => calc(
-                at * Vec2::new(*x, *y),
-                inputs.0[0],
-                effects,
-                connections,
-                input_connectors,
-                parents,
-            ),
+            Effect::Constant { value } => Some(*value),
+            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
+            Effect::Rotate(_) | Effect::Offset(_) | Effect::Scale(_) => calculated_inputs[0],
         }
     }
 
