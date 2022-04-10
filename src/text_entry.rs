@@ -1,7 +1,9 @@
 use crate::{Effect, MyInteraction};
 use bevy::input::keyboard::KeyboardInput;
+use bevy::input::mouse::MouseWheel;
 use bevy::input::ElementState;
 use bevy::prelude::*;
+use std::ops::BitXor;
 
 pub(crate) struct TextEntryPlugin;
 
@@ -10,6 +12,7 @@ impl Plugin for TextEntryPlugin {
         app.add_system(TextEntryPlugin::set_focus)
             .add_system(TextEntryPlugin::tab_focus)
             .add_system(TextEntryPlugin::change_text)
+            .add_system(TextEntryPlugin::value_scrolling)
             .add_system(TextEntryPlugin::reparse_changed_text)
             .add_system(TextEntryPlugin::text_display)
             .add_system(TextEntryPlugin::update_bound_parameter)
@@ -136,6 +139,29 @@ impl TextEntryPlugin {
         }
     }
 
+    /// A system to increment or decrement the lowest written digit of the parameter by mouse wheel.
+    fn value_scrolling(
+        mut entry_fields: Query<(&MyInteraction, &mut TextValue), With<TextValue>>,
+        mut input: EventReader<MouseWheel>,
+    ) {
+        if let Some(wheel) = input.iter().next() {
+            if wheel.y.abs() > f32::EPSILON {
+                let hovered = entry_fields
+                    .iter_mut()
+                    .filter(|(i, _)| matches!(i, MyInteraction::Hover))
+                    .map(|(_, text)| text);
+                for text in hovered {
+                    let mut text: Mut<TextValue> = text;
+                    if text.parsed.is_some() {
+                        let increment = wheel.y > 0.0;
+                        let bcd = text.text.chars().collect::<Vec<char>>();
+                        text.text = increment_bcd(bcd, increment).into_iter().collect();
+                    }
+                }
+            }
+        }
+    }
+
     /// Update the rendered text based on the [TextValue].
     fn text_display(values: Query<&TextValue, Changed<TextValue>>, mut displays: Query<&mut Text>) {
         for value in values.iter() {
@@ -190,6 +216,114 @@ impl TextEntryPlugin {
             }
         }
     }
+}
+
+/// Increment or decrement (based on `increment` flag) a decimal number in form of a list of
+/// chars of the digits.
+///
+/// This can process decimals (with or without fractions) in the positive and negative space.
+/// ```
+/// assert_eq!(
+///     increment_bcd("0.0".chars().collect(), true).into_iter().collect::<String>(),
+///     "0.1".to_string()
+/// );
+/// assert_eq!(
+///     increment_bcd("0.00".chars().collect(), false).into_iter().collect::<String>(),
+///     "-0.01".to_string()
+/// );
+/// ```
+///
+/// It ignores suffixes that are not continuous digits, meaning exponential forms are
+/// compatible.
+/// ```
+/// assert_eq!(
+///     increment_bcd("0.0e1".chars().collect(), true).into_iter().collect::<String>(),
+///     "0.1e1".to_string()
+/// );
+/// ```
+///
+/// The number of trailing zeros are kept as is.
+/// ```
+/// assert_eq!(
+///     increment_bcd("0.01".chars().collect(), false).into_iter().collect::<String>(),
+///     "0.00".to_string()
+/// );
+/// ```
+fn increment_bcd(mut chars: Vec<char>, increment: bool) -> Vec<char> {
+    let least_significant_digit = chars
+        .iter()
+        .enumerate()
+        .map_while(|(i, ch)| match ch {
+            '0'..='9' => Some(Some(i)),
+            '.' | '-' | '+' => Some(None),
+            _ => None,
+        })
+        .last()
+        .flatten();
+    // Apply increment/decrement (and the rest of the addition/subtraction).
+    if let Some(lsd) = least_significant_digit {
+        let is_negative = chars.first() == Some(&'-');
+
+        let add_to_magnitude = increment.bitxor(is_negative);
+        let inc_dec = if add_to_magnitude { 1 } else { 0 };
+
+        let mut idx = lsd as isize;
+        let mut carry = true;
+        while carry && idx >= 0 {
+            let tmp = match chars[idx as usize] {
+                '0' => Some([('9', true), ('1', false)][inc_dec]),
+                '1' => Some([('0', false), ('2', false)][inc_dec]),
+                '2' => Some([('1', false), ('3', false)][inc_dec]),
+                '3' => Some([('2', false), ('4', false)][inc_dec]),
+                '4' => Some([('3', false), ('5', false)][inc_dec]),
+                '5' => Some([('4', false), ('6', false)][inc_dec]),
+                '6' => Some([('5', false), ('7', false)][inc_dec]),
+                '7' => Some([('6', false), ('8', false)][inc_dec]),
+                '8' => Some([('7', false), ('9', false)][inc_dec]),
+                '9' => Some([('8', false), ('0', true)][inc_dec]),
+                '.' | '-' | '+' => None,
+                _ => unreachable!(),
+            };
+            if let Some((digit, c)) = tmp {
+                chars[idx as usize] = digit;
+                carry = c;
+            }
+            idx -= 1;
+        }
+        if carry {
+            if add_to_magnitude {
+                // Insert after a leading sign.
+                if chars.first() == Some(&'+') || chars.first() == Some(&'-') {
+                    chars.insert(1, '1');
+                } else {
+                    chars.insert(0, '1');
+                };
+            } else {
+                // Invert sign and set *LSD* to 1. Do not insert a leading '1'
+                // since that is a different step size. Everthing in front of
+                // the LSD was set to '9' (or left as `~[+-.]`).
+                chars[lsd] = '1';
+                if let Some(idx) = lsd.checked_sub(1) {
+                    let mut idx = idx as isize;
+                    while idx >= 0 {
+                        if chars[idx as usize] == '9' {
+                            chars[idx as usize] = '0';
+                        }
+                        idx -= 1;
+                    }
+                }
+                if chars.first() == Some(&'+') {
+                    chars[0] = '-';
+                } else if chars.first() == Some(&'-') {
+                    // Do not change to '+', just remove the sign.
+                    chars.remove(0);
+                } else {
+                    chars.insert(0, '-');
+                };
+            }
+        }
+    }
+    chars
 }
 
 /// A resource for holding the currently focused element.
