@@ -193,13 +193,28 @@ fn update_texture(
                                 &input_connectors,
                                 &parents,
                             )
-                            .unwrap_or(0.0)
                         })
                         .collect::<Vec<_>>();
+                    // Default alpha to opaque as that is the expected typical use.
                     let color = match effect {
-                        Effect::Rgba(..) => Color::rgba(inputs[0], inputs[1], inputs[2], inputs[3]),
-                        Effect::Hsva(..) => Color::hsla(inputs[0], inputs[1], inputs[2], inputs[3]),
-                        Effect::Gray(..) => Color::rgba(inputs[0], inputs[0], inputs[0], inputs[1]),
+                        Effect::Rgba(..) => Color::rgba(
+                            inputs[0].unwrap_or(0.0),
+                            inputs[1].unwrap_or(0.0),
+                            inputs[2].unwrap_or(0.0),
+                            inputs[3].unwrap_or(1.0),
+                        ),
+                        Effect::Hsva(..) => Color::hsla(
+                            inputs[0].unwrap_or(0.0),
+                            inputs[1].unwrap_or(0.0),
+                            inputs[2].unwrap_or(0.0),
+                            inputs[3].unwrap_or(1.0),
+                        ),
+                        Effect::Gray(..) => Color::rgba(
+                            inputs[0].unwrap_or(0.0),
+                            inputs[0].unwrap_or(0.0),
+                            inputs[0].unwrap_or(0.0),
+                            inputs[1].unwrap_or(1.0),
+                        ),
                         _ => unreachable!(),
                     };
                     write_pixel(image, XY { x, y }, color);
