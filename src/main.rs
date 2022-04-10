@@ -339,7 +339,7 @@ fn create_element(
             });
         let io_pad_mesh = meshes.get(&MyMeshes::IoConnector).unwrap().clone();
         let new = create_pipeline_element(
-            effect.clone(),
+            effect,
             cmds,
             &label,
             (*material).clone(),
@@ -356,7 +356,6 @@ fn create_element(
         // This is not done in the `create_pipeline_element` function based on the `template` flag
         // to not spread out logic and state definitions even further.
         cmds.entity(new)
-            .insert(effect.clone())
             .insert(MyInteraction::Pressed)
             .insert(Draggable)
             .insert(Dragging {
@@ -460,7 +459,7 @@ fn setup(
         mesh_cache.insert(MyMeshes::from(effect), element_mesh.clone());
 
         let child = create_pipeline_element(
-            effect.clone(),
+            &effect,
             &mut cmds,
             effect.name(),
             material_assets.add(ColorMaterial::from(colors[i])),
@@ -499,7 +498,7 @@ fn setup(
 /// The element is interactive but not tagged as a sidebar element or a active pipeline part.
 #[allow(clippy::too_many_arguments)]
 fn create_pipeline_element(
-    effect: Effect,
+    effect: &Effect,
     cmds: &mut Commands,
     label: &str,
     material: Handle<ColorMaterial>,
@@ -576,7 +575,7 @@ fn create_pipeline_element(
         };
         (linked, Some(texture))
     } else {
-        (effect, None)
+        (effect.clone(), None)
     };
 
     // Create main (clickable) box.
