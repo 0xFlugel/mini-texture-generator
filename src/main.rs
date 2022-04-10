@@ -129,10 +129,10 @@ fn update_texture(
             .entity();
         let previous = parents.get(output_connector).ok().unwrap().0;
         let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok().unwrap();
-        match effect {
+        let transformed_at = match effect {
             Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
-            Effect::Constant(c) => Some(*c),
-            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
+            Effect::Constant(_) => at,
+            Effect::LinearX => at,
             Effect::Rotate(deg) => {
                 // Degrees is more human friendly.
                 let rad = deg / 360.0 * (2.0 * std::f32::consts::PI);
@@ -140,8 +140,8 @@ fn update_texture(
                 let at = (rotation * at.extend(1.0)).truncate();
                 at
             }
-            Effect::Offset { x, y } => at + Vec2::new(*x, *y),
-            Effect::Scale { x, y } => at * Vec2::new(*x, *y),
+            Effect::Offset(x, y) => at + Vec2::new(*x, *y),
+            Effect::Scale(x, y) => at * Vec2::new(*x, *y),
         };
 
         let calculated_inputs = inputs
@@ -164,9 +164,9 @@ fn update_texture(
             Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => {
                 unreachable!()
             }
-            Effect::Constant { value } => Some(*value),
+            Effect::Constant(value) => Some(*value),
             Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
-            Effect::Rotate(_) | Effect::Offset(_) | Effect::Scale(_) => calculated_inputs[0],
+            Effect::Rotate(_) | Effect::Offset(_, _) | Effect::Scale(_, _) => calculated_inputs[0],
         }
     }
 
