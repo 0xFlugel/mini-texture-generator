@@ -132,9 +132,11 @@ fn update_texture(
         match effect {
             Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
             Effect::Constant(c) => Some(*c),
-            Effect::LinearX => Some(at.x as _),
-            Effect::Rotate(angle) => {
-                let rotation = Transform::from_rotation(Quat::from_rotation_z(*angle));
+            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32),
+            Effect::Rotate(deg) => {
+                // Degrees is more human friendly.
+                let rad = deg / 360.0 * (2.0 * std::f32::consts::PI);
+                let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
                 let at = (rotation * at.extend(1.0)).truncate();
                 calc(
                     at,
@@ -191,13 +193,28 @@ fn update_texture(
                                 &input_connectors,
                                 &parents,
                             )
-                            .unwrap_or(0.0)
                         })
                         .collect::<Vec<_>>();
+                    // Default alpha to opaque as that is the expected typical use.
                     let color = match effect {
-                        Effect::Rgba(..) => Color::rgba(inputs[0], inputs[1], inputs[2], inputs[3]),
-                        Effect::Hsva(..) => Color::hsla(inputs[0], inputs[1], inputs[2], inputs[3]),
-                        Effect::Gray(..) => Color::rgba(inputs[0], inputs[0], inputs[0], inputs[1]),
+                        Effect::Rgba(..) => Color::rgba(
+                            inputs[0].unwrap_or(0.0),
+                            inputs[1].unwrap_or(0.0),
+                            inputs[2].unwrap_or(0.0),
+                            inputs[3].unwrap_or(1.0),
+                        ),
+                        Effect::Hsva(..) => Color::hsla(
+                            inputs[0].unwrap_or(0.0),
+                            inputs[1].unwrap_or(0.0),
+                            inputs[2].unwrap_or(0.0),
+                            inputs[3].unwrap_or(1.0),
+                        ),
+                        Effect::Gray(..) => Color::rgba(
+                            inputs[0].unwrap_or(0.0),
+                            inputs[0].unwrap_or(0.0),
+                            inputs[0].unwrap_or(0.0),
+                            inputs[1].unwrap_or(1.0),
+                        ),
                         _ => unreachable!(),
                     };
                     write_pixel(image, XY { x, y }, color);
