@@ -8,6 +8,7 @@ pub(crate) struct TextEntryPlugin;
 impl Plugin for TextEntryPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(TextEntryPlugin::set_focus)
+            .add_system(TextEntryPlugin::tab_focus)
             .add_system(TextEntryPlugin::change_text)
             .add_system(TextEntryPlugin::text_display)
             .add_system(TextEntryPlugin::update_bound_parameter)
@@ -34,6 +35,51 @@ impl TextEntryPlugin {
             .any(|i| matches!(i, MyInteraction::Pressed))
         {
             focus.0 = None;
+        }
+    }
+
+    /// Cycle focus on text entries based on position within a pipeline element.
+    fn tab_focus(
+        keyboard_input: ResMut<Input<KeyCode>>,
+        focus: ResMut<Focus>,
+        children: Query<&Children, With<Effect>>,
+        text_entries: Query<(), With<TextValue>>,
+        parents: Query<&Parent>,
+    ) {
+        fn inner(
+            keyboard_input: ResMut<Input<KeyCode>>,
+            mut focus: ResMut<Focus>,
+            children: Query<&Children, With<Effect>>,
+            text_entries: Query<(), With<TextValue>>,
+            parents: Query<&Parent>,
+        ) -> Result<(), bevy::ecs::query::QueryEntityError> {
+            let is_text_entry = |e: &&Entity| text_entries.get(**e).is_ok();
+
+            if keyboard_input.just_pressed(KeyCode::Tab) {
+                let tab = if !keyboard_input.pressed(KeyCode::LShift) {
+                    1isize
+                } else {
+                    -1
+                };
+                if let Some(focused) = focus.0.as_mut() {
+                    let element = parents.get(*focused)?.0;
+                    let candidates = children
+                        .get(element)?
+                        .iter()
+                        .filter(is_text_entry)
+                        .collect::<Vec<_>>();
+                    let focus_idx =
+                        candidates.iter().position(|e| **e == *focused).unwrap() as isize;
+                    let new_focus =
+                        (focus_idx + tab + candidates.len() as isize) as usize % candidates.len();
+                    *focused = *candidates[new_focus];
+                }
+            }
+            Ok(())
+        }
+
+        if let Err(e) = inner(keyboard_input, focus, children, text_entries, parents) {
+            eprintln!("{:?}", e);
         }
     }
 
