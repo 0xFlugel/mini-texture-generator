@@ -222,7 +222,9 @@ impl TextEntryPlugin {
                         | Effect::Mul
                         | Effect::Div
                         | Effect::SineX
-                        | Effect::StepX => {}
+                        | Effect::StepX
+                        | Effect::Cartesian2PolarCoords
+                        | Effect::Polar2CartesianCoords => {}
                     },
                     _ => eprintln!("Text field bound to non-effect."),
                 }

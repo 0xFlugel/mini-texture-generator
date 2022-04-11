@@ -154,6 +154,19 @@ fn update_texture(
             }
             Effect::Offset { x, y } => at + Vec2::new(*x, *y),
             Effect::Scale { x, y } => at * Vec2::new(*x, *y),
+            Effect::Cartesian2PolarCoords => {
+                let [x, y] = at.to_array();
+                let r = (x * x + y * y).sqrt();
+                let phi = (y / x).atan();
+                Vec2::new(r, phi)
+            }
+            Effect::Polar2CartesianCoords => {
+                let [r, phi] = at.to_array();
+                let (sin, cos) = phi.sin_cos();
+                let x = r * cos;
+                let y = r * sin;
+                Vec2::new(x, y)
+            }
         };
 
         let calculated_inputs = inputs
@@ -172,19 +185,24 @@ fn update_texture(
             })
             .collect::<Vec<_>>();
 
+        let binary_op = |op: &dyn Fn(f32, f32) -> f32| {
+            calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| op(a, b)))
+        };
         match effect {
             Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => {
                 unreachable!()
             }
             Effect::Constant { value } => Some(*value),
             Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
-            Effect::Rotate { .. } | Effect::Offset { .. } | Effect::Scale { .. } => {
-                calculated_inputs[0]
-            }
-            Effect::Add => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a + b)),
-            Effect::Sub => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a - b)),
-            Effect::Mul => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a * b)),
-            Effect::Div => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a / b)),
+            Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => calculated_inputs[0],
+            Effect::Add => binary_op(&|a, b| a + b),
+            Effect::Sub => binary_op(&|a, b| a - b),
+            Effect::Mul => binary_op(&|a, b| a * b),
+            Effect::Div => binary_op(&|a, b| a / b),
             Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
@@ -591,7 +609,9 @@ fn create_pipeline_element(
             | Effect::StepX
             | Effect::PerlinNoise { .. }
             | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. } => unreachable!(),
+            | Effect::WhiteNoise { .. }
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => unreachable!(),
         };
         (linked, Some(texture))
     } else {
@@ -900,11 +920,20 @@ enum Effect {
     /// Step function in X direction, stepping at X=0 from intensity zero to one.
     StepX,
     /// A typical noise patter that still has dependency between neighboring intensity values.
-    PerlinNoise { seed: u32 },
+    PerlinNoise {
+        seed: u32,
+    },
     /// More efficient and slightly different than PerlinNoise.
-    SimplexNoise { seed: u32 },
+    SimplexNoise {
+        seed: u32,
+    },
     /// Intensity value defined by random function.
-    WhiteNoise { seed: u32 },
+    WhiteNoise {
+        seed: u32,
+    },
+    /// Transform cartesian coordinates to polar.
+    Cartesian2PolarCoords,
+    Polar2CartesianCoords,
 }
 
 /// Implement equality as being the same variant to be useful for [HashMap]s.
@@ -941,6 +970,8 @@ impl Effect {
             Self::PerlinNoise { seed: 0 },
             Self::SimplexNoise { seed: 0 },
             Self::WhiteNoise { seed: 0 },
+            Self::Cartesian2PolarCoords,
+            Self::Polar2CartesianCoords,
         ]
     }
 
@@ -964,6 +995,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => "Perlin Noise",
             Effect::SimplexNoise { .. } => "Simplex Noise",
             Effect::WhiteNoise { .. } => "White Noise",
+            Effect::Cartesian2PolarCoords => "Cartesian -> Polar Coords",
+            Effect::Polar2CartesianCoords => "Polar -> Cartesian Coords",
         }
     }
 
@@ -987,6 +1020,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => 0,
             Effect::SimplexNoise { .. } => 0,
             Effect::WhiteNoise { .. } => 0,
+            Effect::Cartesian2PolarCoords => 1,
+            Effect::Polar2CartesianCoords => 1,
         }
     }
 
@@ -1010,6 +1045,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => 1,
             Effect::SimplexNoise { .. } => 1,
             Effect::WhiteNoise { .. } => 1,
+            Effect::Cartesian2PolarCoords => 1,
+            Effect::Polar2CartesianCoords => 1,
         }
     }
 
@@ -1025,7 +1062,9 @@ impl Effect {
             | Effect::Mul
             | Effect::Div
             | Effect::SineX
-            | Effect::StepX => &[],
+            | Effect::StepX
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => &[],
             Effect::Constant { .. } => &["Value"],
             Effect::Rotate { .. } => &["Angle"],
             Effect::Offset { .. } | Effect::Scale { .. } => &["X", "Y"],
@@ -1055,6 +1094,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => 14,
             Effect::SimplexNoise { .. } => 15,
             Effect::WhiteNoise { .. } => 16,
+            Effect::Cartesian2PolarCoords => 17,
+            Effect::Polar2CartesianCoords => 18,
         }
     }
 }
