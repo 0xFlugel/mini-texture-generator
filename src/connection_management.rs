@@ -31,7 +31,7 @@ pub(crate) fn start_connecting(
 ) {
     for (connector, _, transform, connections) in clicked_output
         .iter_mut()
-        .filter(|(_, i, _, _)| i == &&MyInteraction::Pressed)
+        .filter(|(_, i, _, _)| i == &&MyInteraction::PressedLeft)
     {
         let connector: Entity = connector;
         // IntelliJ-Rust wrongly remarks an error when just referencing.
@@ -57,7 +57,7 @@ pub(crate) fn start_connecting(
                     start: *mouse_pos,
                 },
                 RayCastMesh::<MyRaycastSet>::default(),
-                MyInteraction::Pressed,
+                MyInteraction::PressedLeft,
                 GlobalTransform::default(),
                 Visibility { is_visible: false },
                 ComputedVisibility::default(),

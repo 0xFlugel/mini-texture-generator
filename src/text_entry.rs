@@ -30,13 +30,13 @@ impl TextEntryPlugin {
     ) {
         for (entity, interaction) in interactions.iter() {
             match interaction {
-                MyInteraction::Pressed => focus.0 = Some(entity),
-                MyInteraction::None | MyInteraction::Hover => {}
+                MyInteraction::PressedLeft => focus.0 = Some(entity),
+                MyInteraction::None | MyInteraction::Hover | MyInteraction::PressedRight => {}
             }
         }
         if defocus_interactions
             .iter()
-            .any(|i| matches!(i, MyInteraction::Pressed))
+            .any(|i| matches!(i, MyInteraction::PressedLeft))
         {
             focus.0 = None;
         }

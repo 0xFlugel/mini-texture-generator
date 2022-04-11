@@ -370,7 +370,7 @@ fn create_element(
         // This is not done in the `create_pipeline_element` function based on the `template` flag
         // to not spread out logic and state definitions even further.
         cmds.entity(new)
-            .insert(MyInteraction::Pressed)
+            .insert(MyInteraction::PressedLeft)
             .insert(Draggable)
             .insert(Dragging {
                 start: mouse_position,
@@ -383,7 +383,7 @@ fn create_element(
     let newly_clicked = changed_interactions
         .iter()
         // Look only at the event where the left mouse button was newly pressed down.
-        .filter(|(_, i)| i.deref() == &MyInteraction::Pressed)
+        .filter(|(_, i)| i.deref() == &MyInteraction::PressedLeft)
         // Exclude all non-sidebar elements to copy only the templates.
         .filter_map(|(e, _)| template_data.get(e).ok());
     let window = windows.get_primary().expect("Primary window must exist.");
