@@ -127,14 +127,9 @@ fn update_texture(
         parents: &Query<&Parent>,
     ) -> Option<f32> {
         let connection = input_connectors.get(input_connector).ok()?.0?;
-        let output_connector = connections
-            .get(connection)
-            .ok()
-            .unwrap()
-            .output_connector
-            .entity();
-        let previous = parents.get(output_connector).ok().unwrap().0;
-        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok().unwrap();
+        let output_connector = connections.get(connection).ok()?.output_connector.entity();
+        let previous = parents.get(output_connector).ok()?.0;
+        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok()?;
 
         let transformed_at = match effect {
             Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => unreachable!(),

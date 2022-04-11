@@ -92,6 +92,9 @@ pub(crate) fn start_connecting(
 ///
 /// This is not included in the [finish_connection] system to automatically update the line when
 /// a connector moves with a dragged pipeline element.
+///
+/// `inner` function exists to allow `?` short-circuiting on deleted connections or otherwise bad
+/// data.
 pub(crate) fn render_connections(
     changed_out: Query<&OutputConnector, Changed<GlobalTransform>>,
     changed_in: Query<&InputConnector, Changed<GlobalTransform>>,
@@ -100,33 +103,51 @@ pub(crate) fn render_connections(
     connectors: Query<&GlobalTransform>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let changed_connections = changed_out
-        .iter()
-        .flat_map(|o| o.0.iter())
-        .chain(changed_in.iter().flat_map(|i| i.0.iter()))
-        .chain(changed_float.iter().map(|f| &f.connection))
-        // Silently ignore lookup failures.
-        .filter_map(|con| connections.get(*con).ok());
-    for (connection, mesh) in changed_connections {
-        let connection: &Connection = connection;
-        let mesh: Option<&mut Mesh> = meshes.get_mut((*mesh).clone().0);
+    fn inner(
+        changed_out: &Query<&OutputConnector, Changed<GlobalTransform>>,
+        changed_in: &Query<&InputConnector, Changed<GlobalTransform>>,
+        changed_float: &Query<&FloatingConnector, Changed<GlobalTransform>>,
+        connections: &Query<(&Connection, &Mesh2dHandle)>,
+        connectors: &Query<&GlobalTransform>,
+        meshes: &mut ResMut<Assets<Mesh>>,
+    ) -> Option<()> {
+        let changed_connections = changed_out
+            .iter()
+            .flat_map(|o| o.0.iter())
+            .chain(changed_in.iter().flat_map(|i| i.0.iter()))
+            .chain(changed_float.iter().map(|f| &f.connection))
+            // Silently ignore lookup failures.
+            .filter_map(|con| connections.get(*con).ok());
+        for (connection, mesh) in changed_connections {
+            let connection: &Connection = connection;
+            let mesh: Option<&mut Mesh> = meshes.get_mut((*mesh).clone().0);
 
-        let out_transform = connectors
-            .get(connection.output_connector.entity())
-            .unwrap();
-        // Y=+-1 because the mesh is a unit square and the connection attaches above or below.
-        // Multiplying with the global transform puts it into the reference frame, i.e. window.
-        let from = out_transform.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
-        let in_transform = connectors.get(connection.input_connector.entity()).unwrap();
-        let to = in_transform.mul_vec3(Vec3::new(0.0, -1.0, 0.0));
+            let out_transform = connectors
+                .get(connection.output_connector.entity()).ok()?;
+            // Y=+-1 because the mesh is a unit square and the connection attaches above or below.
+            // Multiplying with the global transform puts it into the reference frame, i.e. window.
+            let from = out_transform.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+            let in_transform = connectors.get(connection.input_connector.entity()).ok()?;
+            let to = in_transform.mul_vec3(Vec3::new(0.0, -1.0, 0.0));
 
-        let line_mesh = gen_line(&[from, to]);
-        if let Some(mesh) = mesh {
-            *mesh = line_mesh;
-        } else {
-            eprintln!("failed to update connection mesh.");
+            let line_mesh = gen_line(&[from, to]);
+            if let Some(mesh) = mesh {
+                *mesh = line_mesh;
+            } else {
+                eprintln!("failed to update connection mesh.");
+            }
         }
+        Some(())
     }
+
+    let _ = inner(
+        &changed_out,
+        &changed_in,
+        &changed_float,
+        &connections,
+        &connectors,
+        &mut meshes,
+    );
 }
 
 /// A system to scale up an input connector when dragging a connection over it.
