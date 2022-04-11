@@ -1,4 +1,4 @@
-use crate::LINE_HEIGHT;
+use crate::{LINE_HEIGHT, SCROLL_MULTIPLIER};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -148,7 +148,7 @@ impl InteractionPlugin {
         mut hovered: Query<(&mut Transform, &MyInteraction, &mut Scroll)>,
     ) {
         for MouseWheel { y, unit, .. } in inputs.iter() {
-            let delta = y * match unit {
+            let delta = SCROLL_MULTIPLIER * y * match unit {
                 MouseScrollUnit::Line => LINE_HEIGHT,
                 // 1.0 is the pixel size because the camera is using Window coordinates.
                 MouseScrollUnit::Pixel => 1.0,

@@ -57,6 +57,7 @@ const HIGHLIGHT_SCALING: f32 = 1.5;
 
 /// Number of pixels in each direction of the 2D texture.
 const TEXTURE_SIZE: u32 = 16;
+const SCROLL_MULTIPLIER: f32 = 2.0;
 
 /// Global data defines. Used to make `create_image_entity` work with the same allocation size and
 /// interpretaion as `update_teture`.
