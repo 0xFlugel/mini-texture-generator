@@ -67,6 +67,11 @@ const SCALE_FACTOR: f32 = 1.2;
 type PixelData = [f32; 4];
 const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
 
+//TODO This is specific to my GPU architecture, I think. I have a Radeon, though. So little-endian
+// may be correct for Intel (integrated), AMD and NVidia GPUs. Refrence:
+// https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#hardware-implementation
+const LOCAL_TO_GPU_BYTE_ORDER: &dyn Fn(f32) -> [u8; 4] = &f32::to_le_bytes;
+
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
 
 fn main() {
@@ -159,8 +164,7 @@ fn update_texture(
         let pixel = pixel
             .as_rgba_f32()
             .into_iter()
-            //TODO generalize. this is specific to my architecture, i think.
-            .flat_map(f32::to_le_bytes)
+            .flat_map(LOCAL_TO_GPU_BYTE_ORDER)
             .collect::<Vec<_>>();
         img.data[offset..offset + ELEM_SIZE].copy_from_slice(&pixel);
     }
@@ -924,7 +928,7 @@ fn create_image_entity(
         std::iter::repeat(Color::GRAY.as_rgba_f32())
             .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
             .flatten()
-            .flat_map(f32::to_le_bytes)
+            .flat_map(LOCAL_TO_GPU_BYTE_ORDER)
             .collect(),
         TEXTURE_FORMAT,
     ));
