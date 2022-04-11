@@ -81,29 +81,29 @@ impl InteractionPlugin {
 
         // Apply `Pressed` status.
         for input in events.iter() {
-            if let MouseButtonInput {
-                button: MouseButton::Left,
-                state,
-            } = input
-            {
-                match state {
-                    ElementState::Pressed => {
-                        for pressed in &hovering {
-                            if let Ok((_entity, mut interaction)) = interactive.get_mut(*pressed) {
-                                *interaction = MyInteraction::Pressed;
-                            }
+            let MouseButtonInput { button, state } = input;
+            let button = match button {
+                MouseButton::Left => MyInteraction::PressedLeft,
+                MouseButton::Right => MyInteraction::PressedRight,
+                _ => continue,
+            };
+            match state {
+                ElementState::Pressed => {
+                    for pressed in &hovering {
+                        if let Ok((_entity, mut interaction)) = interactive.get_mut(*pressed) {
+                            *interaction = button;
                         }
                     }
-                    ElementState::Released => {
-                        // Defensively release *all* clicked elements, not just the single one from here.
-                        for (e, mut interaction) in interactive.iter_mut() {
-                            if *interaction == MyInteraction::Pressed {
-                                *interaction = if hovering.contains(&e) {
-                                    MyInteraction::Hover
-                                } else {
-                                    MyInteraction::None
-                                };
-                            }
+                }
+                ElementState::Released => {
+                    // Defensively release *all* clicked elements, not just the single one from here.
+                    for (e, mut interaction) in interactive.iter_mut() {
+                        if *interaction == MyInteraction::PressedLeft {
+                            *interaction = if hovering.contains(&e) {
+                                MyInteraction::Hover
+                            } else {
+                                MyInteraction::None
+                            };
                         }
                     }
                 }
@@ -123,7 +123,7 @@ impl InteractionPlugin {
     ) {
         start
             .iter()
-            .filter(|(_, i, _)| **i == MyInteraction::Pressed)
+            .filter(|(_, i, _)| **i == MyInteraction::PressedLeft)
             .for_each(|(e, _, base)| {
                 cmds.entity(e).insert(Dragging {
                     start: *current_mouse_position,
@@ -131,7 +131,7 @@ impl InteractionPlugin {
                 });
             });
         stop.iter()
-            .filter(|(_, i)| **i != MyInteraction::Pressed)
+            .filter(|(_, i)| **i != MyInteraction::PressedLeft)
             .for_each(|(e, _)| {
                 cmds.entity(e).remove::<Dragging>();
             });
@@ -267,7 +267,8 @@ pub(crate) enum MyInteraction {
     Hover,
     /// Set when the left mouse button is pressed while the entity was hovered over. Is reset, when
     /// the left mouse button is released -- i.e. not reset when the cursor moves is moved away.
-    Pressed,
+    PressedLeft,
+    PressedRight,
 }
 
 impl Default for MyInteraction {

@@ -18,7 +18,7 @@ mod interaction;
 mod text_entry;
 mod util;
 
-use crate::connection_management::Connection;
+use crate::connection_management::{delete_connection, Connection};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::ecs::event::{Events, ManualEventReader};
@@ -67,6 +67,11 @@ const SCALE_FACTOR: f32 = 1.2;
 type PixelData = [f32; 4];
 const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
 
+//TODO This is specific to my GPU architecture, I think. I have a Radeon, though. So little-endian
+// may be correct for Intel (integrated), AMD and NVidia GPUs. Refrence:
+// https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#hardware-implementation
+const LOCAL_TO_GPU_BYTE_ORDER: &dyn Fn(f32) -> [u8; 4] = &f32::to_le_bytes;
+
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
 
 fn main() {
@@ -82,7 +87,62 @@ fn main() {
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
+        .add_system(right_click_deletes_element)
         .run();
+}
+
+/// Delete a pipeline element by right clicking.
+fn right_click_deletes_element(
+    mut cmds: Commands,
+    to_delete: Query<(Entity, &MyInteraction), With<Effect>>,
+    connections: Query<&mut Connection>,
+    mut inputs: Query<&mut InputConnector>,
+    mut outputs: Query<&mut OutputConnector>,
+    io_pads: Query<(&OutputConnectors, &InputConnectors)>,
+) {
+    for (entity, interaction) in to_delete.iter() {
+        if interaction == &MyInteraction::PressedRight {
+            delete_pipeline_element(
+                &mut cmds,
+                entity,
+                &connections,
+                &mut inputs,
+                &mut outputs,
+                &io_pads,
+            );
+        }
+    }
+}
+
+/// Delete a pipeline element instance.
+///
+/// This removes the `entity`, all children recursively and all direct connections to other
+/// elements.
+fn delete_pipeline_element(
+    cmds: &mut Commands,
+    entity: Entity,
+    connections: &Query<&mut Connection>,
+    inputs: &mut Query<&mut InputConnector>,
+    outputs: &mut Query<&mut OutputConnector>,
+    io_pads: &Query<(&OutputConnectors, &InputConnectors)>,
+) {
+    if let Ok((o, i)) = io_pads.get(entity) {
+        // Clean up connections to other entities.
+        let resolve_inputs = |e: &Entity| inputs.get(*e).unwrap().0.as_ref();
+        let resolve_outputs = |e: &Entity| outputs.get(*e).unwrap().0.iter();
+        let to_delete =
+            i.0.iter()
+                .filter_map(resolve_inputs)
+                .chain(o.0.iter().flat_map(resolve_outputs))
+                .copied()
+                .collect::<Vec<_>>();
+        for connection in to_delete {
+            delete_connection(connection, cmds, connections, inputs, outputs);
+        }
+
+        // Finally delete this element.
+        cmds.entity(entity).despawn_recursive();
+    }
 }
 
 /// React to changes in connections and update the pipeline (i.e. texture generation function)
@@ -101,8 +161,7 @@ fn update_texture(
         let pixel = pixel
             .as_rgba_f32()
             .into_iter()
-            //TODO generalize. this is specific to my architecture, i think.
-            .flat_map(f32::to_le_bytes)
+            .flat_map(LOCAL_TO_GPU_BYTE_ORDER)
             .collect::<Vec<_>>();
         img.data[offset..offset + ELEM_SIZE].copy_from_slice(&pixel);
     }
@@ -127,14 +186,9 @@ fn update_texture(
         parents: &Query<&Parent>,
     ) -> Option<f32> {
         let connection = input_connectors.get(input_connector).ok()?.0?;
-        let output_connector = connections
-            .get(connection)
-            .ok()
-            .unwrap()
-            .output_connector
-            .entity();
-        let previous = parents.get(output_connector).ok().unwrap().0;
-        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok().unwrap();
+        let output_connector = connections.get(connection).ok()?.output_connector.entity();
+        let previous = parents.get(output_connector).ok()?.0;
+        let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok()?;
 
         let transformed_at = match effect {
             Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => unreachable!(),
@@ -370,7 +424,7 @@ fn create_element(
         // This is not done in the `create_pipeline_element` function based on the `template` flag
         // to not spread out logic and state definitions even further.
         cmds.entity(new)
-            .insert(MyInteraction::Pressed)
+            .insert(MyInteraction::PressedLeft)
             .insert(Draggable)
             .insert(Dragging {
                 start: mouse_position,
@@ -383,7 +437,7 @@ fn create_element(
     let newly_clicked = changed_interactions
         .iter()
         // Look only at the event where the left mouse button was newly pressed down.
-        .filter(|(_, i)| i.deref() == &MyInteraction::Pressed)
+        .filter(|(_, i)| i.deref() == &MyInteraction::PressedLeft)
         // Exclude all non-sidebar elements to copy only the templates.
         .filter_map(|(e, _)| template_data.get(e).ok());
     let window = windows.get_primary().expect("Primary window must exist.");
@@ -871,7 +925,7 @@ fn create_image_entity(
         std::iter::repeat(Color::GRAY.as_rgba_f32())
             .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
             .flatten()
-            .flat_map(f32::to_le_bytes)
+            .flat_map(LOCAL_TO_GPU_BYTE_ORDER)
             .collect(),
         TEXTURE_FORMAT,
     ));
