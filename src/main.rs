@@ -19,7 +19,7 @@ mod text_entry;
 mod util;
 
 use crate::connection_management::Connection;
-use crate::interaction::InteractionPlugin;
+use crate::interaction::{InteractionPlugin, Scroll};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::math::XY;
@@ -389,28 +389,44 @@ fn setup(
         .insert(RayCastSource::<MyRaycastSet>::new());
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
+    let template_effects = Effect::all();
+
     // Create sidebar
     let win_width = window.width();
     let win_height = window.height();
     let sidebar_width = win_width * SIDEBAR_WIDTH;
+    let total_sidebar_lines =
+        // +3 for input pads, outputs pads and title.
+        template_effects.iter().map(|effect| effect.controls().len() + 3).sum::<usize>()
+        // Spacer lines between elements.
+        + template_effects.len().saturating_sub(1)
+        // A spacer line at beginning and end of sidebar to center the elements.
+        + 2;
+    let sidebar_height = LINE_HEIGHT * total_sidebar_lines as f32;
+    let sidebar_center = Vec2::new(
+        -win_width / 2.0 + sidebar_width / 2.0,
+        ((win_height / 2.0/*top*/) + (win_height / 2.0 - sidebar_height/*bottom*/)) / 2.0,
+    );
     let sidebar = cmds
         .spawn_bundle(ColorMesh2dBundle {
-            transform: Transform::from_translation(Vec3::new(
-                -win_width / 2.0 + sidebar_width / 2.0,
-                0.0,
-                0.0,
-            )),
+            transform: Transform::from_translation(sidebar_center.extend(0.0)),
             mesh: Mesh2dHandle(mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::new(
                 sidebar_width,
-                win_height,
+                sidebar_height,
             ))))),
             material: material_assets.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
             ..Default::default()
         })
         .insert(Sidebar)
+        .insert_bundle(InteractionBundle::default())
+        .insert(Scroll {
+            position: 0.0,
+            size: win_height,
+            range: 0.0..sidebar_height,
+        })
         .id();
 
-    let colors = gen_colors(Effect::all().len());
+    let colors = gen_colors(template_effects.len());
 
     let mut mesh_cache = HashMap::new();
     let io_pad_mesh =
@@ -421,10 +437,10 @@ fn setup(
     // per parameter field. Starting at to have them vertically centered instead of touching the
     // border above or below.
     let mut line_offset = 1;
-    for (i, effect) in Effect::all().iter().enumerate() {
+    for (i, effect) in template_effects.iter().enumerate() {
         let this_lines = effect.controls().len() + 3;
         let height = LINE_HEIGHT * this_lines as f32;
-        let width = 0.6 * sidebar_width;
+        let width = 0.8 * sidebar_width;
 
         let element_mesh = Mesh2dHandle::from(
             mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::new(width, height)))),
@@ -441,7 +457,7 @@ fn setup(
             mesh_assets.as_mut(),
             Vec2::new(
                 0.0,
-                win_height / 2.0 - LINE_HEIGHT * line_offset as f32 - height / 2.0,
+                sidebar_height / 2.0 - height / 2.0 - LINE_HEIGHT * line_offset as f32,
             ),
             font.clone(),
             io_pad_mesh.clone(),
