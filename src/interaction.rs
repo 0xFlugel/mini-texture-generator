@@ -1,4 +1,4 @@
-use crate::{LINE_HEIGHT, SCROLL_MULTIPLIER};
+use crate::{LINE_HEIGHT, RootTransform, SCROLL_MULTIPLIER};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -25,6 +25,7 @@ impl Plugin for InteractionPlugin {
             )
             .add_system(InteractionPlugin::dragging)
             .add_system(InteractionPlugin::sidebar_scrolling)
+            .add_system(InteractionPlugin::root_transforms)
             .insert_resource(MousePosition::default());
     }
 }
@@ -139,6 +140,12 @@ impl InteractionPlugin {
             );
             *transform = translate * *base;
         }
+    }
+
+    /// Change the root transformation and with that all pipeline elements. This concerns scaling and
+    /// moving the view.
+    fn root_transforms(mut root: Query<&mut Transform, With<RootTransform>>) {
+        todo!()
     }
 
     /// Apply scrolling via the [MouseWheel] onto the [Transform]s for entities that have a [Scroll]

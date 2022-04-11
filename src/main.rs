@@ -295,6 +295,7 @@ fn create_element(
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
+    root: Query<Entity, With<RootTransform>>,
 ) {
     /// Copy the relevent components directly from the existing template and create a pipeline
     /// element *that is currently being dragged*. The user does not have to click again.
@@ -316,6 +317,7 @@ fn create_element(
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
+        root: &Query<Entity, With<RootTransform>>,
     ) {
         let (SidebarElement(effect), _, mesh, material, children, element_size) = data;
         let label = children
@@ -363,6 +365,8 @@ fn create_element(
                 start: mouse_position,
                 base: Transform::from_translation(position),
             });
+        // Enable root transformations.
+        cmds.entity(root.iter().next().unwrap()).add_child(new);
     }
 
     let newly_clicked = changed_interactions
@@ -386,6 +390,7 @@ fn create_element(
             meshes.as_ref(),
             font.as_ref(),
             &texts,
+            &root,
         );
     }
 }
@@ -407,6 +412,13 @@ fn setup(
     cmds.spawn_bundle(OrthographicCameraBundle::new_2d())
         .insert(RayCastSource::<MyRaycastSet>::new());
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
+
+    cmds.spawn()
+        .insert_bundle(InteractionBundle::default())
+        // Do not include a `Transform` as the entity is now drawn. Only the
+        // `GlobalTransform` is needed for Parent-Child transform propagation.
+        .insert_bundle(GlobalTransform::default())
+        .insert(RootTransform::default());
 
     let template_effects = Effect::all();
 
@@ -1168,3 +1180,8 @@ struct TextFieldBundle {
     #[bundle]
     color_mesh_bundle: ColorMesh2dBundle,
 }
+
+/// A marker for the root transform that allows dragging and scaling all parts of the pipeline --
+/// except the sidebar.
+#[derive(Debug, Default, Clone, Component)]
+struct RootTransform(Transform);
