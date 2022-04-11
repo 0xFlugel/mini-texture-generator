@@ -852,25 +852,41 @@ enum Effect {
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Rgba { target: Option<Handle<Image>> },
+    Rgba {
+        target: Option<Handle<Image>>,
+    },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Hsva { target: Option<Handle<Image>> },
+    Hsva {
+        target: Option<Handle<Image>>,
+    },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Gray { target: Option<Handle<Image>> },
+    Gray {
+        target: Option<Handle<Image>>,
+    },
     /// Holds the constant value that is used for all sampled coordinates.
-    Constant { value: f32 },
+    Constant {
+        value: f32,
+    },
     /// The value for an (X,Y) position is X.
     LinearX,
     /// Holds an angle for rotating the coordinates for sampling.
-    Rotate { degrees: f32 },
+    Rotate {
+        degrees: f32,
+    },
     /// Holds X and Y components offsetting the position for sampling.
-    Offset { x: f32, y: f32 },
+    Offset {
+        x: f32,
+        y: f32,
+    },
     /// Holds X and Y components for scaling the position for sampling.
-    Scale { x: f32, y: f32 },
+    Scale {
+        x: f32,
+        y: f32,
+    },
     /// Intensity addition of the inputs.
     Add,
     /// Intensity subtraction of the inputs.
