@@ -101,18 +101,15 @@ fn right_click_deletes_element(
     io_pads: Query<(&OutputConnectors, &InputConnectors)>,
 ) {
     for (entity, interaction) in to_delete.iter() {
-        match interaction {
-            MyInteraction::PressedRight => {
-                delete_pipeline_element(
-                    &mut cmds,
-                    entity,
-                    &connections,
-                    &mut inputs,
-                    &mut outputs,
-                    &io_pads,
-                );
-            }
-            _ => {}
+        if interaction == &MyInteraction::PressedRight {
+            delete_pipeline_element(
+                &mut cmds,
+                entity,
+                &connections,
+                &mut inputs,
+                &mut outputs,
+                &io_pads,
+            );
         }
     }
 }
