@@ -31,13 +31,14 @@ use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::collections::HashMap;
+use std::f32::consts::PI;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::ops::Deref;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
-const SIDEBAR_WIDTH: f32 = 0.25;
+const SIDEBAR_WIDTH: f32 = 0.2;
 
 /// The relative path after "/assets" in the project folder -- which containts the Cargo.toml.
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
@@ -146,7 +147,7 @@ fn update_texture(
             | Effect::WhiteNoise { .. } => at,
             Effect::Rotate { degrees } => {
                 // Degrees is more human friendly.
-                let rad = degrees / 360.0 * (2.0 * std::f32::consts::PI);
+                let rad = degrees / 360.0 * (2.0 * PI);
                 let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
                 (rotation * at.extend(1.0)).truncate()
             }
@@ -183,11 +184,8 @@ fn update_texture(
             Effect::Sub => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a - b)),
             Effect::Mul => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a * b)),
             Effect::Div => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a / b)),
-            Effect::SineX => Some(
-                0.5 * (at.x as f32 / TEXTURE_SIZE as f32 * (2.0 * std::f32::consts::PI)).sin()
-                    + 0.5,
-            ),
-            Effect::StepX => Some((at.x as f32 >= TEXTURE_SIZE as f32 / 2.0) as u8 as f32),
+            Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
+            Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
             Effect::SimplexNoise { .. } => todo!("Calculate entire texture and cache it."),
             Effect::WhiteNoise { .. } => todo!("Calculate entire texture and cache it."),
