@@ -122,6 +122,7 @@ impl TextEntryPlugin {
                                 text.text.pop();
                                 None
                             }
+                            KeyCode::E => Some('e'),
                             _ => None,
                         };
                         if let Some(ch) = ch {
@@ -193,23 +194,35 @@ impl TextEntryPlugin {
             if let Some(parsed) = *parsed {
                 match params.get_mut(*entity) {
                     Ok(mut effect) => match effect.as_mut() {
-                        Effect::Constant(ref mut value) => *value = parsed,
-                        Effect::Rotate(ref mut angle) => *angle = parsed,
-                        Effect::Offset(ref mut x, ref mut y) => {
+                        Effect::Constant { value } => *value = parsed,
+                        Effect::Rotate { degrees } => *degrees = parsed,
+                        Effect::Offset { x, y } => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {
                                 *y = parsed
                             }
                         }
-                        Effect::Scale(ref mut x, ref mut y) => {
+                        Effect::Scale { x, y } => {
                             if *parameter_idx == 0 {
                                 *x = parsed
                             } else {
                                 *y = parsed
                             }
                         }
-                        _ => {}
+                        Effect::PerlinNoise { seed } => *seed = parsed.round() as u32,
+                        Effect::SimplexNoise { seed } => *seed = parsed.round() as u32,
+                        Effect::WhiteNoise { seed } => *seed = parsed.round() as u32,
+                        Effect::Rgba { .. }
+                        | Effect::Hsva { .. }
+                        | Effect::Gray { .. }
+                        | Effect::LinearX
+                        | Effect::Add
+                        | Effect::Sub
+                        | Effect::Mul
+                        | Effect::Div
+                        | Effect::SineX
+                        | Effect::StepX => {}
                     },
                     _ => eprintln!("Text field bound to non-effect."),
                 }
@@ -351,12 +364,12 @@ impl TextValue {
     }
 }
 
-/// The binding of a value manipulation GUI element, like a [TextFieldBundle], from/to an entities'
+/// The binding of a value manipulation GUI element, like a [crate::TextFieldBundle], from/to an entities'
 /// effect parameter.
 #[derive(Debug, Component)]
 pub(crate) struct ValueBinding {
-    /// The entity for which the [EffectType] is to be changed.
+    /// The entity for which the [Effect] is to be changed.
     pub(crate) entity: Entity,
-    /// The parameter of the [EffectType], if there are multiple.
+    /// The parameter of the `Effect`, if there are multiple.
     pub(crate) parameter_idx: usize,
 }

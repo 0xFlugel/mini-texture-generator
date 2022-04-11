@@ -16,9 +16,10 @@
 mod connection_management;
 mod interaction;
 mod text_entry;
+mod util;
 
 use crate::connection_management::Connection;
-use crate::interaction::InteractionPlugin;
+use crate::interaction::{InteractionPlugin, Scroll};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::math::XY;
@@ -30,13 +31,14 @@ use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::collections::HashMap;
+use std::f32::consts::PI;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::ops::Deref;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
-const SIDEBAR_WIDTH: f32 = 0.25;
+const SIDEBAR_WIDTH: f32 = 0.2;
 
 /// The relative path after "/assets" in the project folder -- which containts the Cargo.toml.
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
@@ -75,7 +77,7 @@ fn main() {
         .add_system(connection_management::highlight_connection_acceptor)
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
-        .add_system(image_modified_detection)
+        .add_system(util::image_modified_detection)
         .run();
 }
 
@@ -129,49 +131,75 @@ fn update_texture(
             .entity();
         let previous = parents.get(output_connector).ok().unwrap().0;
         let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok().unwrap();
-        match effect {
-            Effect::Rgba(_) | Effect::Hsva(_) | Effect::Gray(_) => unreachable!(),
-            Effect::Constant(c) => Some(*c),
-            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
-            Effect::Rotate(deg) => {
+
+        let transformed_at = match effect {
+            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => unreachable!(),
+            Effect::Constant { .. }
+            | Effect::LinearX
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX
+            | Effect::PerlinNoise { .. }
+            | Effect::SimplexNoise { .. }
+            | Effect::WhiteNoise { .. } => at,
+            Effect::Rotate { degrees } => {
                 // Degrees is more human friendly.
-                let rad = deg / 360.0 * (2.0 * std::f32::consts::PI);
+                let rad = degrees / 360.0 * (2.0 * PI);
                 let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
-                let at = (rotation * at.extend(1.0)).truncate();
+                (rotation * at.extend(1.0)).truncate()
+            }
+            Effect::Offset { x, y } => at + Vec2::new(*x, *y),
+            Effect::Scale { x, y } => at * Vec2::new(*x, *y),
+        };
+
+        let calculated_inputs = inputs
+            .0
+            .iter()
+            .copied()
+            .map(|input: Entity| {
                 calc(
-                    at,
-                    inputs.0[0],
+                    transformed_at,
+                    input,
                     effects,
                     connections,
                     input_connectors,
                     parents,
                 )
+            })
+            .collect::<Vec<_>>();
+
+        match effect {
+            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => {
+                unreachable!()
             }
-            Effect::Offset(x, y) => calc(
-                at + Vec2::new(*x, *y),
-                inputs.0[0],
-                effects,
-                connections,
-                input_connectors,
-                parents,
-            ),
-            Effect::Scale(x, y) => calc(
-                at * Vec2::new(*x, *y),
-                inputs.0[0],
-                effects,
-                connections,
-                input_connectors,
-                parents,
-            ),
+            Effect::Constant { value } => Some(*value),
+            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
+            Effect::Rotate { .. } | Effect::Offset { .. } | Effect::Scale { .. } => {
+                calculated_inputs[0]
+            }
+            Effect::Add => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a + b)),
+            Effect::Sub => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a - b)),
+            Effect::Mul => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a * b)),
+            Effect::Div => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a / b)),
+            Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
+            Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
+            Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
+            Effect::SimplexNoise { .. } => todo!("Calculate entire texture and cache it."),
+            Effect::WhiteNoise { .. } => todo!("Calculate entire texture and cache it."),
         }
     }
 
     for (effect, inputs) in effects.iter() {
         let image = match effect {
-            Effect::Rgba(Some(h)) | Effect::Hsva(Some(h)) | Effect::Gray(Some(h)) => {
-                image_assets.get_mut(h)
-            }
-            Effect::Rgba(None) | Effect::Hsva(None) | Effect::Gray(None) => {
+            Effect::Rgba { target: Some(h) }
+            | Effect::Hsva { target: Some(h) }
+            | Effect::Gray { target: Some(h) } => image_assets.get_mut(h),
+            Effect::Rgba { target: None }
+            | Effect::Hsva { target: None }
+            | Effect::Gray { target: None } => {
                 eprintln!("Consumer does not have a display.");
                 None
             }
@@ -199,19 +227,19 @@ fn update_texture(
                         .collect::<Vec<_>>();
                     // Default alpha to opaque as that is the expected typical use.
                     let color = match effect {
-                        Effect::Rgba(..) => Color::rgba(
+                        Effect::Rgba { .. } => Color::rgba(
                             inputs[0].unwrap_or(0.0),
                             inputs[1].unwrap_or(0.0),
                             inputs[2].unwrap_or(0.0),
                             inputs[3].unwrap_or(1.0),
                         ),
-                        Effect::Hsva(..) => Color::hsla(
+                        Effect::Hsva { .. } => Color::hsla(
                             inputs[0].unwrap_or(0.0),
                             inputs[1].unwrap_or(1.0),
                             inputs[2].unwrap_or(0.5),
                             inputs[3].unwrap_or(1.0),
                         ),
-                        Effect::Gray(..) => Color::rgba(
+                        Effect::Gray { .. } => Color::rgba(
                             inputs[0].unwrap_or(0.0),
                             inputs[0].unwrap_or(0.0),
                             inputs[0].unwrap_or(0.0),
@@ -221,77 +249,6 @@ fn update_texture(
                     };
                     write_pixel(image, XY { x, y }, color);
                 }
-            }
-        }
-    }
-}
-
-/// Update all [ColorMaterial]s when their [Image] was modified.
-///
-/// This is currently not done automatically by Bevy
-/// ([which is a bug](https://github.com/bevyengine/bevy/pull/3737)). Code copied from the link.
-///
-/// Whenever an [Image] is modified, if it is referenced by a [ColorMaterial]
-/// we need to trigger an [AssetEvent::Modified] for the [ColorMaterial]
-/// so that extract_render_assets detects it and calls for a new extraction
-fn image_modified_detection(
-    mut image_to_material: Local<HashMap<Handle<Image>, HashSet<Handle<ColorMaterial>>>>,
-    mut image_events: EventReader<AssetEvent<Image>>,
-    materials: Res<Assets<ColorMaterial>>,
-    mut material_events_reader: Local<ManualEventReader<AssetEvent<ColorMaterial>>>,
-    mut material_events: ResMut<Events<AssetEvent<ColorMaterial>>>,
-) {
-    // Keep the image_to_materials HashMap almost up to date.
-    // When a `ColorMaterial` is modified we don't remove it from its previous image entry in the HashMap
-    // thus we handle an `outdated` HashSet during modified_images iteration.
-    for event in material_events_reader.iter(&material_events) {
-        match event {
-            AssetEvent::Created { handle } | AssetEvent::Modified { handle } => {
-                if let Some(image) = materials.get(handle).and_then(|mat| mat.texture.as_ref()) {
-                    image_to_material
-                        .entry(image.clone_weak())
-                        .or_default()
-                        .insert(handle.clone_weak());
-                }
-            }
-            AssetEvent::Removed { handle } => {
-                if let Some(image) = materials.get(handle).and_then(|mat| mat.texture.as_ref()) {
-                    image_to_material
-                        .entry(image.clone_weak())
-                        .or_default()
-                        .remove(handle);
-                }
-            }
-        }
-    }
-    let modified_images = image_events
-        .iter()
-        .filter_map(|event| {
-            if let AssetEvent::Modified { handle } = event {
-                Some(handle)
-            } else {
-                None
-            }
-        })
-        .collect::<HashSet<_>>();
-    if !modified_images.is_empty() {
-        for image in modified_images.iter() {
-            if let Some(material_handles) = image_to_material.get_mut(image) {
-                let mut outdated = HashSet::default();
-                for material_handle in material_handles.iter() {
-                    if Some(*image)
-                        == materials
-                            .get(material_handle)
-                            .and_then(|mat| mat.texture.as_ref())
-                    {
-                        material_events.send(AssetEvent::Modified {
-                            handle: material_handle.clone_weak(),
-                        })
-                    } else {
-                        outdated.insert(material_handle.clone_weak());
-                    }
-                }
-                *material_handles = &*material_handles - &outdated;
             }
         }
     }
@@ -432,37 +389,44 @@ fn setup(
         .insert(RayCastSource::<MyRaycastSet>::new());
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
 
+    let template_effects = Effect::all();
+
     // Create sidebar
     let win_width = window.width();
     let win_height = window.height();
     let sidebar_width = win_width * SIDEBAR_WIDTH;
+    let total_sidebar_lines =
+        // +3 for input pads, outputs pads and title.
+        template_effects.iter().map(|effect| effect.controls().len() + 3).sum::<usize>()
+        // Spacer lines between elements.
+        + template_effects.len().saturating_sub(1)
+        // A spacer line at beginning and end of sidebar to center the elements.
+        + 2;
+    let sidebar_height = LINE_HEIGHT * total_sidebar_lines as f32;
+    let sidebar_center = Vec2::new(
+        -win_width / 2.0 + sidebar_width / 2.0,
+        ((win_height / 2.0/*top*/) + (win_height / 2.0 - sidebar_height/*bottom*/)) / 2.0,
+    );
     let sidebar = cmds
         .spawn_bundle(ColorMesh2dBundle {
-            transform: Transform::from_translation(Vec3::new(
-                -win_width / 2.0 + sidebar_width / 2.0,
-                0.0,
-                0.0,
-            )),
+            transform: Transform::from_translation(sidebar_center.extend(0.0)),
             mesh: Mesh2dHandle(mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::new(
                 sidebar_width,
-                win_height,
+                sidebar_height,
             ))))),
             material: material_assets.add(ColorMaterial::from(Color::from(SIDEBAR_BACKGROUND))),
             ..Default::default()
         })
         .insert(Sidebar)
+        .insert_bundle(InteractionBundle::default())
+        .insert(Scroll {
+            position: 0.0,
+            size: win_height,
+            range: 0.0..sidebar_height,
+        })
         .id();
 
-    let colors = [
-        Color::AQUAMARINE,
-        Color::BLUE,
-        Color::DARK_GRAY,
-        Color::GREEN,
-        Color::PURPLE,
-        Color::TOMATO,
-        Color::VIOLET,
-        Color::YELLOW_GREEN,
-    ];
+    let colors = gen_colors(template_effects.len());
 
     let mut mesh_cache = HashMap::new();
     let io_pad_mesh =
@@ -473,10 +437,10 @@ fn setup(
     // per parameter field. Starting at to have them vertically centered instead of touching the
     // border above or below.
     let mut line_offset = 1;
-    for (i, effect) in Effect::all().iter().enumerate() {
+    for (i, effect) in template_effects.iter().enumerate() {
         let this_lines = effect.controls().len() + 3;
         let height = LINE_HEIGHT * this_lines as f32;
-        let width = 0.6 * sidebar_width;
+        let width = 0.8 * sidebar_width;
 
         let element_mesh = Mesh2dHandle::from(
             mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::new(width, height)))),
@@ -484,7 +448,7 @@ fn setup(
         mesh_cache.insert(MyMeshes::from(effect), element_mesh.clone());
 
         let child = create_pipeline_element(
-            &effect,
+            effect,
             &mut cmds,
             effect.name(),
             material_assets.add(ColorMaterial::from(colors[i])),
@@ -493,7 +457,7 @@ fn setup(
             mesh_assets.as_mut(),
             Vec2::new(
                 0.0,
-                win_height / 2.0 - LINE_HEIGHT * line_offset as f32 - height / 2.0,
+                sidebar_height / 2.0 - height / 2.0 - LINE_HEIGHT * line_offset as f32,
             ),
             font.clone(),
             io_pad_mesh.clone(),
@@ -507,6 +471,21 @@ fn setup(
     }
 
     cmds.insert_resource(mesh_cache);
+}
+
+/// Generates `n` colors with the highest average difference.
+fn gen_colors(n: usize) -> Vec<Color> {
+    (0..n)
+        // Map to evenly spread out hue and 0.25, 0.5 nad 0.75 lightness.
+        .map(|i| {
+            Color::hsla(
+                i as f32 / n as f32 * 360.0,
+                1.0,
+                1.0 - ((i % 3) as f32 + 1.0) / 4.0,
+                1.0,
+            )
+        })
+        .collect()
 }
 
 /// Create new new entity that is a pipeline element.
@@ -574,7 +553,7 @@ fn create_pipeline_element(
     let add_texture_display = !template
         && matches!(
             effect,
-            Effect::Rgba(..) | Effect::Hsva(..) | Effect::Gray(..)
+            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. }
         );
     let (effect, texture) = if add_texture_display {
         let size = element_size.0.width;
@@ -589,14 +568,29 @@ fn create_pipeline_element(
         let (texture, image_handle) =
             create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
         let linked = match effect {
-            Effect::Rgba(_) => Effect::Rgba(Some(image_handle)),
-            Effect::Hsva(_) => Effect::Hsva(Some(image_handle)),
-            Effect::Gray(_) => Effect::Gray(Some(image_handle)),
-            Effect::Constant(..)
+            Effect::Rgba { .. } => Effect::Rgba {
+                target: Some(image_handle),
+            },
+            Effect::Hsva { .. } => Effect::Hsva {
+                target: Some(image_handle),
+            },
+            Effect::Gray { .. } => Effect::Gray {
+                target: Some(image_handle),
+            },
+            Effect::Constant { .. }
             | Effect::LinearX
-            | Effect::Rotate(..)
-            | Effect::Offset(..)
-            | Effect::Scale(..) => unreachable!(),
+            | Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX
+            | Effect::PerlinNoise { .. }
+            | Effect::SimplexNoise { .. }
+            | Effect::WhiteNoise { .. } => unreachable!(),
         };
         (linked, Some(texture))
     } else {
@@ -857,25 +851,43 @@ enum Effect {
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Rgba(Option<Handle<Image>>),
+    Rgba { target: Option<Handle<Image>> },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Hsva(Option<Handle<Image>>),
+    Hsva { target: Option<Handle<Image>> },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Gray(Option<Handle<Image>>),
+    Gray { target: Option<Handle<Image>> },
     /// Holds the constant value that is used for all sampled coordinates.
-    Constant(f32),
+    Constant { value: f32 },
     /// The value for an (X,Y) position is X.
     LinearX,
     /// Holds an angle for rotating the coordinates for sampling.
-    Rotate(f32),
+    Rotate { degrees: f32 },
     /// Holds X and Y components offsetting the position for sampling.
-    Offset(f32, f32),
+    Offset { x: f32, y: f32 },
     /// Holds X and Y components for scaling the position for sampling.
-    Scale(f32, f32),
+    Scale { x: f32, y: f32 },
+    /// Intensity addition of the inputs.
+    Add,
+    /// Intensity subtraction of the inputs.
+    Sub,
+    /// Intensity multiplication of the inputs.
+    Mul,
+    /// Intensity division of the inputs.
+    Div,
+    /// Sine function over intensive in X direction.
+    SineX,
+    /// Step function in X direction, stepping at X=0 from intensity zero to one.
+    StepX,
+    /// A typical noise patter that still has dependency between neighboring intensity values.
+    PerlinNoise { seed: u32 },
+    /// More efficient and slightly different than PerlinNoise.
+    SimplexNoise { seed: u32 },
+    /// Intensity value defined by random function.
+    WhiteNoise { seed: u32 },
 }
 
 /// Implement equality as being the same variant to be useful for [HashMap]s.
@@ -895,84 +907,137 @@ impl Effect {
     /// A list of all variants.
     fn all() -> Vec<Self> {
         vec![
-            Self::Rgba(None),
-            Self::Hsva(None),
-            Self::Gray(None),
-            Self::Constant(1.0),
+            Self::Rgba { target: None },
+            Self::Hsva { target: None },
+            Self::Gray { target: None },
+            Self::Constant { value: 1.0 },
             Self::LinearX,
-            Self::Rotate(1.0),
-            Self::Offset(1.0, 1.0),
-            Self::Scale(1.0, 1.0),
+            Self::Rotate { degrees: 1.0 },
+            Self::Offset { x: 1.0, y: 1.0 },
+            Self::Scale { x: 1.0, y: 1.0 },
+            Self::Add,
+            Self::Sub,
+            Self::Mul,
+            Self::Div,
+            Self::SineX,
+            Self::StepX,
+            Self::PerlinNoise { seed: 0 },
+            Self::SimplexNoise { seed: 0 },
+            Self::WhiteNoise { seed: 0 },
         ]
     }
 
     /// A display name for each variant.
     fn name(&self) -> &str {
         match self {
-            Effect::Rgba(..) => "RGBA",
-            Effect::Hsva(..) => "HSVA",
-            Effect::Gray(..) => "GRAY",
-            Effect::Constant(..) => "Constant",
+            Effect::Rgba { .. } => "RGBA",
+            Effect::Hsva { .. } => "HSVA",
+            Effect::Gray { .. } => "GRAY",
+            Effect::Constant { .. } => "Constant",
             Effect::LinearX => "X Gradient",
-            Effect::Rotate(..) => "Rotate",
-            Effect::Offset(..) => "Offset",
-            Effect::Scale(..) => "Scale",
+            Effect::Rotate { .. } => "Rotate",
+            Effect::Offset { .. } => "Offset",
+            Effect::Scale { .. } => "Scale",
+            Effect::Add => "Add",
+            Effect::Sub => "Sub",
+            Effect::Mul => "Mul",
+            Effect::Div => "Div",
+            Effect::SineX => "Sine",
+            Effect::StepX => "Step",
+            Effect::PerlinNoise { .. } => "Perlin Noise",
+            Effect::SimplexNoise { .. } => "Simplex Noise",
+            Effect::WhiteNoise { .. } => "White Noise",
         }
     }
 
     /// The number of input connections for the variant.
     fn inputs(&self) -> usize {
         match self {
-            Effect::Rgba(..) => 4,
-            Effect::Hsva(..) => 4,
-            Effect::Gray(..) => 2,
-            Effect::Constant(..) => 0,
+            Effect::Rgba { .. } => 4,
+            Effect::Hsva { .. } => 4,
+            Effect::Gray { .. } => 2,
+            Effect::Constant { .. } => 0,
             Effect::LinearX => 0,
-            Effect::Rotate(..) => 1,
-            Effect::Offset(..) => 1,
-            Effect::Scale(..) => 1,
+            Effect::Rotate { .. } => 1,
+            Effect::Offset { .. } => 1,
+            Effect::Scale { .. } => 1,
+            Effect::Add => 2,
+            Effect::Sub => 2,
+            Effect::Mul => 2,
+            Effect::Div => 2,
+            Effect::SineX => 0,
+            Effect::StepX => 0,
+            Effect::PerlinNoise { .. } => 0,
+            Effect::SimplexNoise { .. } => 0,
+            Effect::WhiteNoise { .. } => 0,
         }
     }
 
     /// The number of output connections for the variant.
     fn outputs(&self) -> usize {
         match self {
-            Effect::Rgba(..) => 0,
-            Effect::Hsva(..) => 0,
-            Effect::Gray(..) => 0,
-            Effect::Constant(..) => 1,
+            Effect::Rgba { .. } => 0,
+            Effect::Hsva { .. } => 0,
+            Effect::Gray { .. } => 0,
+            Effect::Constant { .. } => 1,
             Effect::LinearX => 1,
-            Effect::Rotate(..) => 1,
-            Effect::Offset(..) => 1,
-            Effect::Scale(..) => 1,
+            Effect::Rotate { .. } => 1,
+            Effect::Offset { .. } => 1,
+            Effect::Scale { .. } => 1,
+            Effect::Add => 1,
+            Effect::Sub => 1,
+            Effect::Mul => 1,
+            Effect::Div => 1,
+            Effect::SineX => 1,
+            Effect::StepX => 1,
+            Effect::PerlinNoise { .. } => 1,
+            Effect::SimplexNoise { .. } => 1,
+            Effect::WhiteNoise { .. } => 1,
         }
     }
 
     /// The names of internal parameters of each variant.
     fn controls(&self) -> &'static [&'static str] {
         match self {
-            Effect::Rgba(..) => &[],
-            Effect::Hsva(..) => &[],
-            Effect::Gray(..) => &[],
-            Effect::Constant(..) => &["Value"],
-            Effect::LinearX => &[],
-            Effect::Rotate(..) => &["Angle"],
-            Effect::Offset(..) => &["X", "Y"],
-            Effect::Scale(..) => &["X", "Y"],
+            Effect::Rgba { .. }
+            | Effect::Hsva { .. }
+            | Effect::Gray { .. }
+            | Effect::LinearX
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX => &[],
+            Effect::Constant { .. } => &["Value"],
+            Effect::Rotate { .. } => &["Angle"],
+            Effect::Offset { .. } | Effect::Scale { .. } => &["X", "Y"],
+            Effect::PerlinNoise { .. }
+            | Effect::SimplexNoise { .. }
+            | Effect::WhiteNoise { .. } => &["Seed"],
         }
     }
 
     /// Return a unique number for each variant.
     fn ord(&self) -> usize {
         match self {
-            Effect::Rgba(..) => 0,
-            Effect::Hsva(..) => 1,
-            Effect::Gray(..) => 2,
-            Effect::Constant(..) => 3,
+            Effect::Rgba { .. } => 0,
+            Effect::Hsva { .. } => 1,
+            Effect::Gray { .. } => 2,
+            Effect::Constant { .. } => 3,
             Effect::LinearX => 4,
-            Effect::Rotate(..) => 5,
-            Effect::Offset(..) => 6,
-            Effect::Scale(..) => 7,
+            Effect::Rotate { .. } => 5,
+            Effect::Offset { .. } => 6,
+            Effect::Scale { .. } => 7,
+            Effect::Add => 8,
+            Effect::Sub => 9,
+            Effect::Mul => 10,
+            Effect::Div => 11,
+            Effect::SineX => 12,
+            Effect::StepX => 13,
+            Effect::PerlinNoise { .. } => 14,
+            Effect::SimplexNoise { .. } => 15,
+            Effect::WhiteNoise { .. } => 16,
         }
     }
 }

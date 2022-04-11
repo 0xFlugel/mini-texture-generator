@@ -1,8 +1,10 @@
-use bevy::input::mouse::MouseButtonInput;
+use crate::LINE_HEIGHT;
+use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
 use bevy::utils::hashbrown::HashSet;
 use bevy_mod_raycast::{DefaultRaycastingPlugin, RayCastMethod, RayCastSource, RaycastSystem};
+use std::ops::Range;
 
 pub(crate) struct InteractionPlugin;
 
@@ -22,6 +24,7 @@ impl Plugin for InteractionPlugin {
                     .after(RaycastSystem::UpdateRaycast),
             )
             .add_system(InteractionPlugin::dragging)
+            .add_system(InteractionPlugin::sidebar_scrolling)
             .insert_resource(MousePosition::default());
     }
 }
@@ -137,6 +140,57 @@ impl InteractionPlugin {
             *transform = translate * *base;
         }
     }
+
+    /// Apply scrolling via the [MouseWheel] onto the [Transform]s for entities that have a [Scroll]
+    /// component.
+    fn sidebar_scrolling(
+        mut inputs: EventReader<MouseWheel>,
+        mut hovered: Query<(&mut Transform, &MyInteraction, &mut Scroll)>,
+    ) {
+        for MouseWheel { y, unit, .. } in inputs.iter() {
+            let delta = y * match unit {
+                MouseScrollUnit::Line => LINE_HEIGHT,
+                // 1.0 is the pixel size because the camera is using Window coordinates.
+                MouseScrollUnit::Pixel => 1.0,
+            };
+            for (transform, interaction, scroll) in hovered.iter_mut() {
+                let mut transform: Mut<Transform> = transform;
+                let interaction: &MyInteraction = interaction;
+                let mut scroll: Mut<Scroll> = scroll;
+                if interaction == &MyInteraction::Hover {
+                    let Scroll {
+                        size,
+                        range,
+                        position,
+                    } = &mut *scroll;
+                    let point = if delta > 0.0 {
+                        *position + *size
+                    } else {
+                        *position
+                    };
+                    let bounded_delta = (point + delta).clamp(range.start, range.end) - point;
+                    *position += bounded_delta;
+                    *transform = *transform
+                        * Transform::from_translation(Vec3::new(0.0, bounded_delta, 0.0));
+                }
+            }
+        }
+    }
+}
+
+/// A component to enable scrolling functionality on an entity.
+///
+/// Other needed components are [MyInteraction] and [Transform].
+#[derive(Debug, Default, Clone, Component)]
+pub(crate) struct Scroll {
+    /// The extend of the view being scrolled. The `position` cannot by less than `range.start` and
+    /// `position+size` cannot be greater than `range.end.`.
+    pub(crate) range: Range<f32>,
+    /// A point in the range.
+    pub(crate) position: f32,
+    /// Size of the view that is being scrolled -- typically the size of the object on the scrolling
+    /// axis.
+    pub(crate) size: f32,
 }
 
 /// A marker for entities that can be dragged.
