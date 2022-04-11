@@ -18,7 +18,7 @@ mod interaction;
 mod text_entry;
 mod util;
 
-use crate::connection_management::Connection;
+use crate::connection_management::{delete_connection, Connection};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::ecs::event::{Events, ManualEventReader};
@@ -82,7 +82,65 @@ fn main() {
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
+        .add_system(right_click_deletes_element)
         .run();
+}
+
+/// Delete a pipeline element by right clicking.
+fn right_click_deletes_element(
+    mut cmds: Commands,
+    to_delete: Query<(Entity, &MyInteraction), With<Effect>>,
+    connections: Query<&mut Connection>,
+    mut inputs: Query<&mut InputConnector>,
+    mut outputs: Query<&mut OutputConnector>,
+    io_pads: Query<(&OutputConnectors, &InputConnectors)>,
+) {
+    for (entity, interaction) in to_delete.iter() {
+        match interaction {
+            MyInteraction::PressedRight => {
+                delete_pipeline_element(
+                    &mut cmds,
+                    entity,
+                    &connections,
+                    &mut inputs,
+                    &mut outputs,
+                    &io_pads,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Delete a pipeline element instance.
+///
+/// This removes the `entity`, all children recursively and all direct connections to other
+/// elements.
+fn delete_pipeline_element(
+    cmds: &mut Commands,
+    entity: Entity,
+    connections: &Query<&mut Connection>,
+    inputs: &mut Query<&mut InputConnector>,
+    outputs: &mut Query<&mut OutputConnector>,
+    io_pads: &Query<(&OutputConnectors, &InputConnectors)>,
+) {
+    if let Ok((o, i)) = io_pads.get(entity) {
+        // Clean up connections to other entities.
+        let resolve_inputs = |e: &Entity| inputs.get(*e).unwrap().0.as_ref();
+        let resolve_outputs = |e: &Entity| outputs.get(*e).unwrap().0.iter();
+        let to_delete =
+            i.0.iter()
+                .filter_map(resolve_inputs)
+                .chain(o.0.iter().flat_map(resolve_outputs))
+                .copied()
+                .collect::<Vec<_>>();
+        for connection in to_delete {
+            delete_connection(connection, cmds, connections, inputs, outputs);
+        }
+
+        // Finally delete this element.
+        cmds.entity(entity).despawn_recursive();
+    }
 }
 
 /// React to changes in connections and update the pipeline (i.e. texture generation function)

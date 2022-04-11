@@ -285,7 +285,7 @@ pub(crate) fn finish_connection(
 
 /// Properly despawn a connection, incl. the floating connector, and remove the references from IO
 /// pads to it.
-fn delete_connection<'a>(
+pub(crate) fn delete_connection<'a>(
     connection: Entity,
     cmds: &'a mut Commands,
     connections: &Query<&mut Connection>,
