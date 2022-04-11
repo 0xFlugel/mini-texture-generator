@@ -57,6 +57,10 @@ const HIGHLIGHT_SCALING: f32 = 1.5;
 
 /// Number of pixels in each direction of the 2D texture.
 const TEXTURE_SIZE: u32 = 16;
+/// A multiplier to the OS scroll distance for vertical scrolling.
+const SCROLL_MULTIPLIER: f32 = 2.0;
+//// A multiplier for stepping through scale factors in the main view.
+const SCALE_FACTOR: f32 = 1.2;
 
 /// Global data defines. Used to make `create_image_entity` work with the same allocation size and
 /// interpretaion as `update_teture`.
@@ -153,6 +157,19 @@ fn update_texture(
             }
             Effect::Offset { x, y } => at + Vec2::new(*x, *y),
             Effect::Scale { x, y } => at * Vec2::new(*x, *y),
+            Effect::Cartesian2PolarCoords => {
+                let [x, y] = at.to_array();
+                let r = (x * x + y * y).sqrt();
+                let phi = (y / x).atan();
+                Vec2::new(r, phi)
+            }
+            Effect::Polar2CartesianCoords => {
+                let [r, phi] = at.to_array();
+                let (sin, cos) = phi.sin_cos();
+                let x = r * cos;
+                let y = r * sin;
+                Vec2::new(x, y)
+            }
         };
 
         let calculated_inputs = inputs
@@ -171,19 +188,24 @@ fn update_texture(
             })
             .collect::<Vec<_>>();
 
+        let binary_op = |op: &dyn Fn(f32, f32) -> f32| {
+            calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| op(a, b)))
+        };
         match effect {
             Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => {
                 unreachable!()
             }
             Effect::Constant { value } => Some(*value),
             Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
-            Effect::Rotate { .. } | Effect::Offset { .. } | Effect::Scale { .. } => {
-                calculated_inputs[0]
-            }
-            Effect::Add => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a + b)),
-            Effect::Sub => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a - b)),
-            Effect::Mul => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a * b)),
-            Effect::Div => calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| a / b)),
+            Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => calculated_inputs[0],
+            Effect::Add => binary_op(&|a, b| a + b),
+            Effect::Sub => binary_op(&|a, b| a - b),
+            Effect::Mul => binary_op(&|a, b| a * b),
+            Effect::Div => binary_op(&|a, b| a / b),
             Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
@@ -276,6 +298,7 @@ fn create_element(
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
+    root: Query<(Entity, &Transform), With<RootTransform>>,
 ) {
     /// Copy the relevent components directly from the existing template and create a pipeline
     /// element *that is currently being dragged*. The user does not have to click again.
@@ -289,7 +312,7 @@ fn create_element(
             &Children,
             &ElementSize,
         ),
-        position: Vec3,
+        mut position: Vec3,
         mouse_position: MousePosition,
         materials: &mut Assets<ColorMaterial>,
         image_assets: &mut Assets<Image>,
@@ -297,7 +320,16 @@ fn create_element(
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
+        root: &Query<(Entity, &Transform), With<RootTransform>>,
     ) {
+        // Root may be moved wherever. This element is starting at the given position, unaffected by
+        // root transform.
+        let inverted_root = root
+            .iter()
+            .next()
+            .map(|(_, transform)| Transform::from_matrix(transform.compute_matrix().inverse()));
+        position = inverted_root.unwrap_or_default() * position;
+
         let (SidebarElement(effect), _, mesh, material, children, element_size) = data;
         let label = children
             .iter()
@@ -344,6 +376,8 @@ fn create_element(
                 start: mouse_position,
                 base: Transform::from_translation(position),
             });
+        // Enable root transformations.
+        cmds.entity(root.iter().next().unwrap().0).add_child(new);
     }
 
     let newly_clicked = changed_interactions
@@ -367,6 +401,7 @@ fn create_element(
             meshes.as_ref(),
             font.as_ref(),
             &texts,
+            &root,
         );
     }
 }
@@ -388,6 +423,14 @@ fn setup(
     cmds.spawn_bundle(OrthographicCameraBundle::new_2d())
         .insert(RayCastSource::<MyRaycastSet>::new());
     cmds.insert_resource(DefaultPluginState::<MyRaycastSet>::default().with_debug_cursor());
+
+    cmds.spawn()
+        .insert_bundle(InteractionBundle::default())
+        // Do not include a `Transform` as the entity is now drawn. Only the
+        // `GlobalTransform` is needed for Parent-Child transform propagation.
+        .insert(Transform::default())
+        .insert(GlobalTransform::default())
+        .insert(RootTransform);
 
     let template_effects = Effect::all();
 
@@ -590,7 +633,9 @@ fn create_pipeline_element(
             | Effect::StepX
             | Effect::PerlinNoise { .. }
             | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. } => unreachable!(),
+            | Effect::WhiteNoise { .. }
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => unreachable!(),
         };
         (linked, Some(texture))
     } else {
@@ -851,25 +896,41 @@ enum Effect {
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Rgba { target: Option<Handle<Image>> },
+    Rgba {
+        target: Option<Handle<Image>>,
+    },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Hsva { target: Option<Handle<Image>> },
+    Hsva {
+        target: Option<Handle<Image>>,
+    },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
-    Gray { target: Option<Handle<Image>> },
+    Gray {
+        target: Option<Handle<Image>>,
+    },
     /// Holds the constant value that is used for all sampled coordinates.
-    Constant { value: f32 },
+    Constant {
+        value: f32,
+    },
     /// The value for an (X,Y) position is X.
     LinearX,
     /// Holds an angle for rotating the coordinates for sampling.
-    Rotate { degrees: f32 },
+    Rotate {
+        degrees: f32,
+    },
     /// Holds X and Y components offsetting the position for sampling.
-    Offset { x: f32, y: f32 },
+    Offset {
+        x: f32,
+        y: f32,
+    },
     /// Holds X and Y components for scaling the position for sampling.
-    Scale { x: f32, y: f32 },
+    Scale {
+        x: f32,
+        y: f32,
+    },
     /// Intensity addition of the inputs.
     Add,
     /// Intensity subtraction of the inputs.
@@ -883,11 +944,20 @@ enum Effect {
     /// Step function in X direction, stepping at X=0 from intensity zero to one.
     StepX,
     /// A typical noise patter that still has dependency between neighboring intensity values.
-    PerlinNoise { seed: u32 },
+    PerlinNoise {
+        seed: u32,
+    },
     /// More efficient and slightly different than PerlinNoise.
-    SimplexNoise { seed: u32 },
+    SimplexNoise {
+        seed: u32,
+    },
     /// Intensity value defined by random function.
-    WhiteNoise { seed: u32 },
+    WhiteNoise {
+        seed: u32,
+    },
+    /// Transform cartesian coordinates to polar.
+    Cartesian2PolarCoords,
+    Polar2CartesianCoords,
 }
 
 /// Implement equality as being the same variant to be useful for [HashMap]s.
@@ -924,6 +994,8 @@ impl Effect {
             Self::PerlinNoise { seed: 0 },
             Self::SimplexNoise { seed: 0 },
             Self::WhiteNoise { seed: 0 },
+            Self::Cartesian2PolarCoords,
+            Self::Polar2CartesianCoords,
         ]
     }
 
@@ -947,6 +1019,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => "Perlin Noise",
             Effect::SimplexNoise { .. } => "Simplex Noise",
             Effect::WhiteNoise { .. } => "White Noise",
+            Effect::Cartesian2PolarCoords => "Cartesian -> Polar Coords",
+            Effect::Polar2CartesianCoords => "Polar -> Cartesian Coords",
         }
     }
 
@@ -970,6 +1044,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => 0,
             Effect::SimplexNoise { .. } => 0,
             Effect::WhiteNoise { .. } => 0,
+            Effect::Cartesian2PolarCoords => 1,
+            Effect::Polar2CartesianCoords => 1,
         }
     }
 
@@ -993,6 +1069,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => 1,
             Effect::SimplexNoise { .. } => 1,
             Effect::WhiteNoise { .. } => 1,
+            Effect::Cartesian2PolarCoords => 1,
+            Effect::Polar2CartesianCoords => 1,
         }
     }
 
@@ -1008,7 +1086,9 @@ impl Effect {
             | Effect::Mul
             | Effect::Div
             | Effect::SineX
-            | Effect::StepX => &[],
+            | Effect::StepX
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => &[],
             Effect::Constant { .. } => &["Value"],
             Effect::Rotate { .. } => &["Angle"],
             Effect::Offset { .. } | Effect::Scale { .. } => &["X", "Y"],
@@ -1038,6 +1118,8 @@ impl Effect {
             Effect::PerlinNoise { .. } => 14,
             Effect::SimplexNoise { .. } => 15,
             Effect::WhiteNoise { .. } => 16,
+            Effect::Cartesian2PolarCoords => 17,
+            Effect::Polar2CartesianCoords => 18,
         }
     }
 }
@@ -1110,3 +1192,8 @@ struct TextFieldBundle {
     #[bundle]
     color_mesh_bundle: ColorMesh2dBundle,
 }
+
+/// A marker for the root transform that allows dragging and scaling all parts of the pipeline --
+/// except the sidebar.
+#[derive(Debug, Default, Clone, Component)]
+struct RootTransform;
