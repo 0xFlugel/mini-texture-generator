@@ -148,8 +148,7 @@ fn update_texture(
                 // Degrees is more human friendly.
                 let rad = degrees / 360.0 * (2.0 * std::f32::consts::PI);
                 let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
-                let at = (rotation * at.extend(1.0)).truncate();
-                at
+                (rotation * at.extend(1.0)).truncate()
             }
             Effect::Offset { x, y } => at + Vec2::new(*x, *y),
             Effect::Scale { x, y } => at * Vec2::new(*x, *y),
@@ -435,7 +434,7 @@ fn setup(
         mesh_cache.insert(MyMeshes::from(effect), element_mesh.clone());
 
         let child = create_pipeline_element(
-            &effect,
+            effect,
             &mut cmds,
             effect.name(),
             material_assets.add(ColorMaterial::from(colors[i])),
