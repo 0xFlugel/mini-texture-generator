@@ -1,4 +1,4 @@
-use crate::{LINE_HEIGHT, RootTransform, SCROLL_MULTIPLIER};
+use crate::{RootTransform, LINE_HEIGHT, SCALE_FACTOR, SCROLL_MULTIPLIER};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -119,6 +119,7 @@ impl InteractionPlugin {
         stop: Query<(Entity, &MyInteraction), With<Dragging>>,
         mut cmds: Commands,
         current_mouse_position: Res<MousePosition>,
+        root: Query<&Transform, (With<RootTransform>, Without<Dragging>)>,
     ) {
         start
             .iter()
@@ -135,17 +136,55 @@ impl InteractionPlugin {
                 cmds.entity(e).remove::<Dragging>();
             });
         for (Dragging { start, base }, mut transform) in continue_.iter_mut() {
-            let translate = Transform::from_translation(
-                (current_mouse_position.position - start.position).extend(0.0),
-            );
-            *transform = translate * *base;
+            let root_scale = root.iter().next().copied().unwrap_or_default().scale;
+            let translate = (current_mouse_position.position - start.position).extend(0.0);
+            transform.translation = base.translation + translate / root_scale;
         }
     }
 
     /// Change the root transformation and with that all pipeline elements. This concerns scaling and
     /// moving the view.
-    fn root_transforms(mut root: Query<&mut Transform, With<RootTransform>>) {
-        todo!()
+    fn root_transforms(
+        mut root: Query<&mut Transform, With<RootTransform>>,
+        mouse_position: Res<MousePosition>,
+        mouse_buttons: Res<Input<MouseButton>>,
+        mut mouse_wheels: EventReader<MouseWheel>,
+        mut prev_position: Local<Option<Vec2>>,
+        interactions: Query<&MyInteraction>,
+    ) {
+        // Always read the events as they are stored up if not.
+        let scale_units = mouse_wheels.iter().fold(0.0, |acc, elem| {
+            acc + if elem.y.abs() < f32::EPSILON {
+                0.0f32
+            } else {
+                elem.y.signum()
+            }
+        });
+
+        //TODO This is bad design. This system must check for other system to be not run. Better
+        // would be a pre-running system to organize which general type of interaction is executed:
+        // * element manipulation,
+        // * sidebar manipulation or
+        // * root manipulation.
+        let shall_affect_root = interactions.iter().all(|i| i == &MyInteraction::None);
+
+        if shall_affect_root {
+            if let Some(mut transform) = root.iter_mut().next() {
+                transform.scale *= Vec2::splat(SCALE_FACTOR.powf(scale_units)).extend(1.0);
+                if mouse_buttons.pressed(MouseButton::Left) {
+                    let current_position = mouse_position.position;
+                    let translation = (*prev_position)
+                        .filter(|_| shall_affect_root)
+                        .map(|prev| (current_position - prev).extend(0.0))
+                        .unwrap_or_default();
+                    transform.translation += translation;
+
+                    *prev_position = Some(current_position);
+                } else {
+                    *prev_position = None;
+                }
+            }
+        }
     }
 
     /// Apply scrolling via the [MouseWheel] onto the [Transform]s for entities that have a [Scroll]
@@ -155,11 +194,13 @@ impl InteractionPlugin {
         mut hovered: Query<(&mut Transform, &MyInteraction, &mut Scroll)>,
     ) {
         for MouseWheel { y, unit, .. } in inputs.iter() {
-            let delta = SCROLL_MULTIPLIER * y * match unit {
-                MouseScrollUnit::Line => LINE_HEIGHT,
-                // 1.0 is the pixel size because the camera is using Window coordinates.
-                MouseScrollUnit::Pixel => 1.0,
-            };
+            let delta = SCROLL_MULTIPLIER
+                * y
+                * match unit {
+                    MouseScrollUnit::Line => LINE_HEIGHT,
+                    // 1.0 is the pixel size because the camera is using Window coordinates.
+                    MouseScrollUnit::Pixel => 1.0,
+                };
             for (transform, interaction, scroll) in hovered.iter_mut() {
                 let mut transform: Mut<Transform> = transform;
                 let interaction: &MyInteraction = interaction;

@@ -57,7 +57,10 @@ const HIGHLIGHT_SCALING: f32 = 1.5;
 
 /// Number of pixels in each direction of the 2D texture.
 const TEXTURE_SIZE: u32 = 16;
+/// A multiplier to the OS scroll distance for vertical scrolling.
 const SCROLL_MULTIPLIER: f32 = 2.0;
+//// A multiplier for stepping through scale factors in the main view.
+const SCALE_FACTOR: f32 = 1.2;
 
 /// Global data defines. Used to make `create_image_entity` work with the same allocation size and
 /// interpretaion as `update_teture`.
@@ -295,7 +298,7 @@ fn create_element(
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
     texts: Query<&Text>,
-    root: Query<Entity, With<RootTransform>>,
+    root: Query<(Entity, &Transform), With<RootTransform>>,
 ) {
     /// Copy the relevent components directly from the existing template and create a pipeline
     /// element *that is currently being dragged*. The user does not have to click again.
@@ -309,7 +312,7 @@ fn create_element(
             &Children,
             &ElementSize,
         ),
-        position: Vec3,
+        mut position: Vec3,
         mouse_position: MousePosition,
         materials: &mut Assets<ColorMaterial>,
         image_assets: &mut Assets<Image>,
@@ -317,8 +320,16 @@ fn create_element(
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
         texts: &Query<&Text>,
-        root: &Query<Entity, With<RootTransform>>,
+        root: &Query<(Entity, &Transform), With<RootTransform>>,
     ) {
+        // Root may be moved wherever. This element is starting at the given position, unaffected by
+        // root transform.
+        let inverted_root = root
+            .iter()
+            .next()
+            .map(|(_, transform)| Transform::from_matrix(transform.compute_matrix().inverse()));
+        position = inverted_root.unwrap_or_default() * position;
+
         let (SidebarElement(effect), _, mesh, material, children, element_size) = data;
         let label = children
             .iter()
@@ -366,7 +377,7 @@ fn create_element(
                 base: Transform::from_translation(position),
             });
         // Enable root transformations.
-        cmds.entity(root.iter().next().unwrap()).add_child(new);
+        cmds.entity(root.iter().next().unwrap().0).add_child(new);
     }
 
     let newly_clicked = changed_interactions
@@ -417,8 +428,9 @@ fn setup(
         .insert_bundle(InteractionBundle::default())
         // Do not include a `Transform` as the entity is now drawn. Only the
         // `GlobalTransform` is needed for Parent-Child transform propagation.
-        .insert_bundle(GlobalTransform::default())
-        .insert(RootTransform::default());
+        .insert(Transform::default())
+        .insert(GlobalTransform::default())
+        .insert(RootTransform);
 
     let template_effects = Effect::all();
 
@@ -1184,4 +1196,4 @@ struct TextFieldBundle {
 /// A marker for the root transform that allows dragging and scaling all parts of the pipeline --
 /// except the sidebar.
 #[derive(Debug, Default, Clone, Component)]
-struct RootTransform(Transform);
+struct RootTransform;
