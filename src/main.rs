@@ -17,10 +17,12 @@ mod connection_management;
 mod interaction;
 mod text_entry;
 mod util;
+mod persistence;
 
-use crate::connection_management::{delete_connection, Connection};
+use crate::connection_management::{Connection, delete_connection};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
+use bevy::core::FixedTimestep;
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::math::XY;
 use bevy::prelude::*;
@@ -90,11 +92,26 @@ struct Args {
 }
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
+    let args: Args = Args::parse();
+    let mut app = App::new();
+    // setup for loading and saving.
+    app.insert_resource(args.clone())
+        .add_system(persistence::save_to_file.exclusive_system().at_end())
+        .add_startup_system(persistence::load_from_file.after("setup"))
+        // .register_type()
+    ;
+    if let Some(minutes) = args.autosave {
+        app.add_system_set(
+            SystemSet::new()
+                .with_system(persistence::save_to_file)
+                .with_run_criteria(FixedTimestep::step(minutes as f64 * 60.0)),
+        );
+    }
+    // setup for normal running
+    app.add_plugins(DefaultPlugins)
         .add_plugin(InteractionPlugin)
         .add_plugin(TextEntryPlugin)
-        .add_startup_system(setup)
+        .add_startup_system_set(SystemSet::new().with_system(setup).label("setup"))
         .add_system(create_element)
         .add_system(connection_management::start_connecting)
         .add_system(connection_management::render_connections)
@@ -102,8 +119,8 @@ fn main() {
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
-        .add_system(right_click_deletes_element)
-        .run();
+        .add_system(right_click_deletes_element);
+    app.run();
 }
 
 /// Delete a pipeline element by right clicking.
