@@ -14,6 +14,8 @@ bevy = { git = "https://github.com/bevyengine/bevy", rev = "193e8c4ada2c324b5222
 bevy_mod_raycast = { path = "bevy_mod_raycast" }
 
 clap = { version = "3", features = ["derive"] }
+ron = "0.7.0"
+serde = { version = "1", features = ["derive"] }
 
 # (https://bevy-cheatbook.github.io/pitfalls/performance.html):
 # Enable only a small amount of optimization in debug mode

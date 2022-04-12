@@ -210,6 +210,8 @@ dependencies = [
  "bevy",
  "bevy_mod_raycast",
  "clap",
+ "ron",
+ "serde",
 ]
 
 [[package]]
