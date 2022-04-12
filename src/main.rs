@@ -15,11 +15,11 @@
 
 mod connection_management;
 mod interaction;
+mod persistence;
 mod text_entry;
 mod util;
-mod persistence;
 
-use crate::connection_management::{Connection, delete_connection};
+use crate::connection_management::{delete_connection, Connection};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::core::FixedTimestep;

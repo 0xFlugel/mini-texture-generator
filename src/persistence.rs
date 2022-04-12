@@ -1,6 +1,6 @@
 use crate::{
     Args, Connection, Effect, InputConnector, InputConnectors, OutputConnector, OutputConnectors,
-    RootTransform,
+    RootTransform, SidebarElement,
 };
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -33,34 +33,110 @@ pub(crate) fn load_from_file(args: Res<Args>) {
 /// * <https://github.com/bevyengine/bevy/issues/166>
 pub(crate) fn save_to_file(
     root: Query<&Transform, With<RootTransform>>,
-    elements: Query<(
-        Entity,
-        &Effect,
-        &Transform,
-        &InputConnectors,
-        &OutputConnectors,
-    )>,
-    connections: Query<&Connection>,
-    input_connectors: Query<(&InputConnector, &Parent)>,
-    output_connectors: Query<(&OutputConnector, &Parent)>,
-    args: Res<Args>,
-) {
-    fn convert_elements(
-        elements: &Query<(
+    elements: Query<
+        (
             Entity,
             &Effect,
             &Transform,
             &InputConnectors,
             &OutputConnectors,
-        )>,
+        ),
+        Without<SidebarElement>,
+    >,
+    connections: Query<&Connection>,
+    output_connectors: Query<(&OutputConnector, &Parent)>,
+    input_connections: Query<&InputConnector>,
+    args: Res<Args>,
+) {
+    fn convert_elements(
+        elements: &Query<
+            (
+                Entity,
+                &Effect,
+                &Transform,
+                &InputConnectors,
+                &OutputConnectors,
+            ),
+            Without<SidebarElement>,
+        >,
         connections: &Query<&Connection>,
-        input_connectors: &Query<(&InputConnector, &Parent)>,
         output_connectors: &Query<(&OutputConnector, &Parent)>,
+        input_connections: &Query<&InputConnector>,
     ) -> Vec<ElementState> {
-        let index_map = HashMap::<usize, Entity>::from_iter(
-            elements.iter().enumerate().map(|(i, (e, ..))| (i, e)),
+        type OutputConnectorIndex = ConnectorIndex;
+        type InputConnectorIndex = ConnectorIndex;
+
+        // Pre-built an index maps so that we do not need to resolve many times or work on partially
+        // available data when building the ElementState.
+        let entity_indices = HashMap::<Entity, ArrayIndex>::from_iter(
+            elements.iter().enumerate().map(|(i, (e, ..))| (e, i)),
         );
-        todo!()
+        let mut dependency_indices =
+            HashMap::<(Entity, InputConnectorIndex), (ArrayIndex, OutputConnectorIndex)>::new();
+        for (entity, _, _, inputs, _) in elements.iter() {
+            for (idx, input) in inputs.0.iter().enumerate() {
+                let key: (Entity, InputConnectorIndex) = (entity, idx);
+                if let &InputConnector(Some(connection)) = input_connections.get(*input).unwrap() {
+                    let output_connector = connections
+                        .get(connection)
+                        .unwrap()
+                        .output_connector
+                        .entity();
+                    let source_effect: Entity =
+                        output_connectors.get(output_connector).unwrap().1 .0;
+                    let source_output_connectors: &OutputConnectors =
+                        elements.get(source_effect).unwrap().4;
+                    let out_con_index: OutputConnectorIndex = source_output_connectors
+                        .0
+                        .iter()
+                        .position(|out_con| *out_con == output_connector)
+                        .unwrap();
+                    let value: (ArrayIndex, OutputConnectorIndex) =
+                        (entity_indices[&source_effect].clone(), out_con_index);
+                    dependency_indices.insert(key, value);
+                }
+            }
+        }
+        dbg!(&entity_indices, &dependency_indices);
+
+        let mut result = vec![];
+        for (entity, effect, transform, inputs, _) in elements.iter() {
+            let entity: Entity = entity;
+            let effect: &Effect = effect;
+            let transform: &Transform = transform;
+            let inputs: &InputConnectors = inputs;
+
+            let parameters = match effect {
+                Effect::PerlinNoise { seed }
+                | Effect::SimplexNoise { seed }
+                | Effect::WhiteNoise { seed } => vec![*seed as f32],
+                Effect::Rotate { degrees: p1 } | Effect::Constant { value: p1 } => vec![*p1],
+                Effect::Offset { x, y } | Effect::Scale { x, y } => {
+                    vec![*x, *y]
+                }
+                Effect::Rgba { .. }
+                | Effect::Hsva { .. }
+                | Effect::Gray { .. }
+                | Effect::LinearX
+                | Effect::Add
+                | Effect::Sub
+                | Effect::Mul
+                | Effect::Div
+                | Effect::SineX
+                | Effect::StepX
+                | Effect::Cartesian2PolarCoords
+                | Effect::Polar2CartesianCoords => vec![],
+            };
+            result.push(ElementState {
+                type_id: effect.ord(),
+                parameters,
+                input_dependencies: (0..inputs.0.len())
+                    .map(|idx| dependency_indices.get(&(entity, idx)).copied())
+                    .collect(),
+                position: transform.translation,
+            });
+        }
+        result
     }
 
     let root = root.iter().next().unwrap();
@@ -70,8 +146,8 @@ pub(crate) fn save_to_file(
         elements: convert_elements(
             &elements,
             &connections,
-            &input_connectors,
             &output_connectors,
+            &input_connections,
         ),
     };
     match File::create(args.save_to.as_path()) {
@@ -122,4 +198,5 @@ struct ElementState {
     parameters: Vec<f32>,
     /// For each connector (for the [Effect] variant), whether it is connected and which connector.
     input_dependencies: Vec<Option<(ArrayIndex, ConnectorIndex)>>,
+    position: Vec3,
 }
