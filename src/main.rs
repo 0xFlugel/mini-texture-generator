@@ -96,14 +96,13 @@ fn main() {
     let mut app = App::new();
     // setup for loading and saving.
     app.insert_resource(args.clone())
-        .add_system(persistence::save_to_file.exclusive_system().at_end())
-        .add_startup_system(persistence::load_from_file.after("setup"))
-        // .register_type()
+        //TODO add a system to react to closing request and set a save!-flag.
+        // .add_startup_system(persistence::load_from_file.after("setup"))
     ;
     if let Some(minutes) = args.autosave {
         app.add_system_set(
             SystemSet::new()
-                .with_system(persistence::save_to_file)
+                .with_system(persistence::save_to_file.exclusive_system().at_end())
                 .with_run_criteria(FixedTimestep::step(minutes as f64 * 60.0)),
         );
     }
