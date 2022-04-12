@@ -28,6 +28,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
 use bevy::utils::HashSet;
 use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
+use clap::{Parser, ValueHint};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::collections::HashMap;
@@ -35,6 +36,7 @@ use std::f32::consts::PI;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::ops::Deref;
+use std::path::PathBuf;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
@@ -73,6 +75,19 @@ const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
 const LOCAL_TO_GPU_BYTE_ORDER: &dyn Fn(f32) -> [u8; 4] = &f32::to_le_bytes;
 
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
+
+#[derive(Debug, Clone, Parser)]
+struct Args {
+    /// The file to load from.
+    #[clap(value_hint = ValueHint::AnyPath)]
+    file: Option<PathBuf>,
+    /// Number of minutes between auto-saves. Deactivated when not set.
+    #[clap(long, short)]
+    autosave: Option<f32>,
+    /// The file to save to when auto-saving and when closing the program.
+    #[clap(long, short, default_value = "autosave.ron", value_hint = ValueHint::FilePath)]
+    save_to: PathBuf,
+}
 
 fn main() {
     App::new()
