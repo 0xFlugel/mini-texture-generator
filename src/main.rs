@@ -30,6 +30,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
 use bevy::transform::TransformSystem;
 use bevy::utils::HashSet;
+use bevy::window::WindowCloseRequested;
 use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use clap::{Parser, ValueHint};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
@@ -96,14 +97,16 @@ fn main() {
     let args: Args = Args::parse();
     let mut app = App::new();
     // setup for loading and saving.
-    //TODO add a system to react to closing request and set a save!-flag.
     app.insert_resource(args.clone())
+        .init_resource::<Events<MetaEvent>>()
         .add_system(persistence::load_from_file)
-        .add_system(persistence::connect_loaded_effects.after(TransformSystem::TransformPropagate));
+        .add_system(persistence::connect_loaded_effects.after(TransformSystem::TransformPropagate))
+        .add_system(shutdown)
+        .add_system(persistence::save_to_file.exclusive_system().at_end());
     if let Some(minutes) = args.autosave {
         app.add_system_set(
             SystemSet::new()
-                .with_system(persistence::save_to_file.exclusive_system().at_end())
+                .with_system(autosave)
                 .with_run_criteria(FixedTimestep::step(minutes as f64 * 60.0)),
         );
     }
@@ -121,6 +124,21 @@ fn main() {
         .add_system(util::image_modified_detection)
         .add_system(right_click_deletes_element);
     app.run();
+}
+
+fn shutdown(closing: EventReader<WindowCloseRequested>, mut meta_events: EventWriter<MetaEvent>) {
+    if !closing.is_empty() {
+        meta_events.send(MetaEvent::Save);
+    }
+}
+
+fn autosave(mut meta_events: EventWriter<MetaEvent>) {
+    meta_events.send(MetaEvent::Save);
+}
+
+enum MetaEvent {
+    /// Save the current state to file.
+    Save,
 }
 
 /// Delete a pipeline element by right clicking.

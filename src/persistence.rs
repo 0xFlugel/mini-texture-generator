@@ -3,8 +3,8 @@ use crate::connection_management::{
 };
 use crate::{
     create_pipeline_element, gen_colors, Args, Connection, Draggable, Effect, ElementSize,
-    InputConnector, InputConnectors, MyMeshes, OutputConnector, OutputConnectors, RootTransform,
-    SidebarElement,
+    InputConnector, InputConnectors, MetaEvent, MyMeshes, OutputConnector, OutputConnectors,
+    RootTransform, SidebarElement,
 };
 use bevy::prelude::*;
 use bevy::sprite::Mesh2dHandle;
@@ -205,6 +205,7 @@ pub(crate) fn connect_loaded_effects(
 /// * <https://github.com/bevyengine/bevy/discussions/1265>
 /// * <https://github.com/bevyengine/bevy/issues/166>
 pub(crate) fn save_to_file(
+    mut meta_events: EventReader<MetaEvent>,
     root: Query<&Transform, With<RootTransform>>,
     elements: Query<
         (
@@ -311,37 +312,39 @@ pub(crate) fn save_to_file(
         result
     }
 
-    let root = root.iter().next().unwrap();
-    let state = SaveState {
-        view_translation: root.translation,
-        view_scale: root.scale,
-        elements: convert_elements(
-            &elements,
-            &connections,
-            &output_connectors,
-            &input_connections,
-        ),
-    };
-    match File::create(args.save_to.as_path()) {
-        Ok(mut file) => {
-            let result = file.write_all(
-                ron::ser::to_string_pretty(&state, ron::ser::PrettyConfig::default())
-                    .unwrap()
-                    .as_bytes(),
-            );
-            if let Err(e) = result {
-                eprintln!(
-                    "Failed to serialize state \"{}\": {}",
-                    args.save_to.display(),
-                    e
+    if meta_events.iter().any(|e| matches!(e, MetaEvent::Save)) {
+        let root = root.iter().next().unwrap();
+        let state = SaveState {
+            view_translation: root.translation,
+            view_scale: root.scale,
+            elements: convert_elements(
+                &elements,
+                &connections,
+                &output_connectors,
+                &input_connections,
+            ),
+        };
+        match File::create(args.save_to.as_path()) {
+            Ok(mut file) => {
+                let result = file.write_all(
+                    ron::ser::to_string_pretty(&state, ron::ser::PrettyConfig::default())
+                        .unwrap()
+                        .as_bytes(),
                 );
+                if let Err(e) = result {
+                    eprintln!(
+                        "Failed to serialize state \"{}\": {}",
+                        args.save_to.display(),
+                        e
+                    );
+                }
             }
+            Err(file_creation_error) => eprintln!(
+                "Failed to write to file \"{}\": {}",
+                args.save_to.display(),
+                file_creation_error
+            ),
         }
-        Err(file_creation_error) => eprintln!(
-            "Failed to write to file \"{}\": {}",
-            args.save_to.display(),
-            file_creation_error
-        ),
     }
 }
 
