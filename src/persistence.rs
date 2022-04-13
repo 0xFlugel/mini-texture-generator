@@ -1,28 +1,146 @@
 use crate::{
-    Args, Connection, Effect, InputConnector, InputConnectors, OutputConnector, OutputConnectors,
-    RootTransform, SidebarElement,
+    create_pipeline_element, gen_colors, Args, Connection, Dragging, Effect, ElementSize,
+    InputConnector, InputConnectors, MyMeshes, OutputConnector, OutputConnectors, RootTransform,
+    SidebarElement,
 };
 use bevy::prelude::*;
+use bevy::sprite::Mesh2dHandle;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 
 /// Load the save file created by [save_to_file], if given, and overwrite the state from `setup`.
-pub(crate) fn load_from_file(args: Res<Args>) {
-    if let Some(path) = args.file.as_ref() {
-        // Back out of default "assets/" subdirectory with "../".
-        let bytes = std::fs::read(path.as_path());
-        match bytes {
-            Ok(bytes) => match ron::de::from_bytes::<SaveState>(&bytes) {
-                Ok(_state) => {
-                    todo!()
-                }
-                Err(e) => {
-                    eprintln!("Failed to parse contents of \"{}\": {}", path.display(), e)
-                }
-            },
-            Err(e) => eprintln!("Failed to load file \"{}\": {}", path.display(), e),
+///
+/// # Impl
+///
+/// Unfortunately, we cannot run this as a startup-system because the mesh size ressource
+/// that is inserted in the [crate::setup] function is not accessible to other startup-systems.
+/// Thus we use a local run-once flag.
+pub(crate) fn load_from_file(
+    mut cmds: Commands,
+    mut root: Query<&mut Transform, With<RootTransform>>,
+    effect_sizes: Query<(&Effect, &ElementSize)>,
+    mut material_assets: ResMut<Assets<ColorMaterial>>,
+    mut image_assets: ResMut<Assets<Image>>,
+    mut mesh_assets: ResMut<Assets<Mesh>>,
+    meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
+    font: Res<Handle<Font>>,
+    args: Res<Args>,
+    mut run_once: Local<bool>,
+) {
+    if !*run_once {
+        *run_once = true;
+
+        if let Some(path) = args.file.as_ref() {
+            let bytes = std::fs::read(path.as_path());
+            match bytes {
+                Ok(bytes) => match ron::de::from_bytes::<SaveState>(&bytes) {
+                    Ok(state) => {
+                        let mut root = root.iter_mut().next().unwrap();
+                        *root.translation = *state.view_translation;
+                        *root.scale = *state.view_scale;
+                        let mut elements = vec![];
+                        for element in &state.elements {
+                            let ElementState {
+                                position,
+                                type_id,
+                                parameters,
+                                ..
+                            } = element;
+                            let effect = {
+                                //TODO Fix pot. panic b/c remove input-data-defined type_id.
+                                let mut effect = Effect::all().remove(*type_id);
+                                match &mut effect {
+                                    Effect::PerlinNoise { seed }
+                                    | Effect::SimplexNoise { seed }
+                                    | Effect::WhiteNoise { seed } => {
+                                        if let Some(p) = parameters.first() {
+                                            *seed = *p as u32;
+                                        }
+                                    }
+                                    Effect::Constant { value: p1 }
+                                    | Effect::Rotate { degrees: p1 } => {
+                                        if let Some(p) = parameters.first() {
+                                            *p1 = *p;
+                                        }
+                                    }
+                                    Effect::Offset { x, y } | Effect::Scale { x, y } => {
+                                        if let Some(p) = parameters.get(0) {
+                                            *x = *p;
+                                        }
+                                        if let Some(p) = parameters.get(1) {
+                                            *y = *p;
+                                        }
+                                    }
+                                    Effect::Rgba { .. }
+                                    | Effect::Hsva { .. }
+                                    | Effect::Gray { .. }
+                                    | Effect::LinearX
+                                    | Effect::Add
+                                    | Effect::Sub
+                                    | Effect::Mul
+                                    | Effect::Div
+                                    | Effect::SineX
+                                    | Effect::StepX
+                                    | Effect::Cartesian2PolarCoords
+                                    | Effect::Polar2CartesianCoords => {}
+                                }
+                                effect
+                            };
+                            let material = material_assets.add(ColorMaterial::from(
+                                gen_colors(Effect::all().len())[effect.ord()],
+                            ));
+                            let io_pad_mesh_handle = meshes.get(&MyMeshes::IoConnector).unwrap();
+                            let element_mesh = meshes.get(&MyMeshes::from(&effect)).unwrap();
+                            let element_size = effect_sizes
+                                .iter()
+                                .find(|(eff, _)| eff.ord() == effect.ord())
+                                .map(|(_, size)| size.clone())
+                                .unwrap();
+                            let element = create_pipeline_element(
+                                &effect,
+                                &mut cmds,
+                                effect.name(),
+                                material,
+                                &mut material_assets,
+                                &mut image_assets,
+                                &mut mesh_assets,
+                                position.truncate(),
+                                font.clone(),
+                                io_pad_mesh_handle.clone(),
+                                (element_mesh.clone(), element_size),
+                                false,
+                            );
+                            cmds.entity(element)
+                                .remove::<Dragging>()
+                                .insert(Interaction::None);
+                            elements.push((element, effect));
+                        }
+                        cmds.insert_resource((elements, state.elements));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to parse contents of \"{}\": {}", path.display(), e)
+                    }
+                },
+                Err(e) => eprintln!("Failed to load file \"{}\": {}", path.display(), e),
+            }
         }
+    }
+}
+
+/// A helper system to connect loaded effects.
+///
+/// This is needed because the [crate::create_pipeline_element] function does not return mutable
+/// references to the generated connector data.
+pub(crate) fn connect_loaded_effects(
+    mut cmds: Commands,
+    mut elements: Query<(&Effect, &mut InputConnectors, &mut OutputConnectors)>,
+    mut in_con: Query<&mut InputConnector>,
+    mut out_con: Query<&mut OutputConnector>,
+    mut to_connect: Option<ResMut<((Entity, Effect), ElementState)>>,
+) {
+    if let Some(to_connect) = to_connect.as_mut() {
+        todo!()
     }
 }
 
@@ -187,11 +305,11 @@ struct SaveState {
     elements: Vec<ElementState>,
 }
 
-type ArrayIndex = usize;
-type ConnectorIndex = usize;
+pub(crate) type ArrayIndex = usize;
+pub(crate) type ConnectorIndex = usize;
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-struct ElementState {
+pub(crate) struct ElementState {
     /// Value of [Effect::ord].
     type_id: usize,
     /// The values of all parameters (in order) for the [Effect] variant.

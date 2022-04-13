@@ -95,10 +95,10 @@ fn main() {
     let args: Args = Args::parse();
     let mut app = App::new();
     // setup for loading and saving.
+    //TODO add a system to react to closing request and set a save!-flag.
     app.insert_resource(args.clone())
-        //TODO add a system to react to closing request and set a save!-flag.
-        // .add_startup_system(persistence::load_from_file.after("setup"))
-    ;
+        .add_system(persistence::load_from_file)
+        .add_system(persistence::connect_loaded_effects);
     if let Some(minutes) = args.autosave {
         app.add_system_set(
             SystemSet::new()
@@ -110,7 +110,7 @@ fn main() {
     app.add_plugins(DefaultPlugins)
         .add_plugin(InteractionPlugin)
         .add_plugin(TextEntryPlugin)
-        .add_startup_system_set(SystemSet::new().with_system(setup).label("setup"))
+        .add_startup_system_set(SystemSet::new().with_system(setup))
         .add_system(create_element)
         .add_system(connection_management::start_connecting)
         .add_system(connection_management::render_connections)
