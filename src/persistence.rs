@@ -1,5 +1,8 @@
+use crate::connection_management::{
+    calc_line_end_points, gen_line, ConnectionAttachment, ConnectionBundle,
+};
 use crate::{
-    create_pipeline_element, gen_colors, Args, Connection, Dragging, Effect, ElementSize,
+    create_pipeline_element, gen_colors, Args, Connection, Draggable, Effect, ElementSize,
     InputConnector, InputConnectors, MyMeshes, OutputConnector, OutputConnectors, RootTransform,
     SidebarElement,
 };
@@ -136,15 +139,63 @@ fn set_parameters(effect: &mut Effect, parameters: &Vec<f32>) {
 ///
 /// This is needed because the [crate::create_pipeline_element] function does not return mutable
 /// references to the generated connector data.
+///
+/// # Note
+///
+/// This system must run *after* the transform propagation happened.
 pub(crate) fn connect_loaded_effects(
     mut cmds: Commands,
-    mut elements: Query<(&Effect, &mut InputConnectors, &mut OutputConnectors)>,
+    elements: Query<(&InputConnectors, &OutputConnectors)>,
+    materials: Query<&Handle<ColorMaterial>>,
     mut in_con: Query<&mut InputConnector>,
     mut out_con: Query<&mut OutputConnector>,
-    mut to_connect: Option<ResMut<((Entity, Effect), ElementState)>>,
+    connectors: Query<&GlobalTransform>,
+    mut to_connect: Option<ResMut<(Vec<(Entity, Effect)>, Vec<ElementState>)>>,
+    mut mesh_assets: ResMut<Assets<Mesh>>,
 ) {
     if let Some(to_connect) = to_connect.as_mut() {
-        todo!()
+        let (entities_effects, states) = std::mem::take(to_connect.as_mut());
+        for ((to_entity, to_effect), to_state) in entities_effects.iter().cloned().zip(states) {
+            for i in 0..to_effect.inputs() {
+                let to_connector: Entity = elements.get(to_entity).unwrap().0 .0[i];
+                if let Some((dep_entity_idx, output_connector_idx)) = to_state.input_dependencies[i]
+                {
+                    let (from_entity, from_effect) = &entities_effects[dep_entity_idx];
+                    assert!(from_effect.outputs() > output_connector_idx); //TODO Missing good check. Fix in post.
+                    let from_connector: Entity =
+                        elements.get(*from_entity).unwrap().1 .0[output_connector_idx];
+                    let material = materials
+                        .get(from_connector)
+                        .expect("connector has no material.");
+                    let connection = Connection {
+                        output_connector: ConnectionAttachment::Connector(from_connector),
+                        input_connector: ConnectionAttachment::Connector(to_connector),
+                    };
+                    let mesh = {
+                        let (from, to) = calc_line_end_points(&connection, &connectors)
+                            .expect("IO pads should exist, but don't.");
+                        mesh_assets.add(gen_line(&[from, to])).into()
+                    };
+
+                    let connection = cmds
+                        .spawn()
+                        .insert_bundle(ConnectionBundle {
+                            connection,
+                            transform: Transform::default(),
+                            mesh,
+                            material: (*material).clone(),
+                            global_transform: Default::default(),
+                            visibility: Default::default(),
+                            comp_vis: Default::default(),
+                        })
+                        .id();
+
+                    in_con.get_mut(to_connector).unwrap().0 = Some(connection);
+                    out_con.get_mut(from_connector).unwrap().0.push(connection);
+                }
+            }
+        }
+        cmds.remove_resource::<(Vec<(Entity, Effect)>, Vec<ElementState>)>();
     }
 }
 
@@ -219,7 +270,6 @@ pub(crate) fn save_to_file(
                 }
             }
         }
-        dbg!(&entity_indices, &dependency_indices);
 
         let mut result = vec![];
         for (entity, effect, transform, inputs, _) in elements.iter() {

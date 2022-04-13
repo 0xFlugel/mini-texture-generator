@@ -28,6 +28,7 @@ use bevy::math::XY;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
+use bevy::transform::TransformSystem;
 use bevy::utils::HashSet;
 use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
 use clap::{Parser, ValueHint};
@@ -98,7 +99,7 @@ fn main() {
     //TODO add a system to react to closing request and set a save!-flag.
     app.insert_resource(args.clone())
         .add_system(persistence::load_from_file)
-        .add_system(persistence::connect_loaded_effects);
+        .add_system(persistence::connect_loaded_effects.after(TransformSystem::TransformPropagate));
     if let Some(minutes) = args.autosave {
         app.add_system_set(
             SystemSet::new()
