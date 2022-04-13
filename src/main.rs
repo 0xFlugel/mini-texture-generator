@@ -240,7 +240,53 @@ fn update_texture(
         let previous = parents.get(output_connector).ok()?.0;
         let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok()?;
 
-        let transformed_at = match effect {
+        let transformed_at = transform_coordinate(effect, at);
+        let calculated_inputs = inputs
+            .0
+            .iter()
+            .map(|input| {
+                calc(
+                    transformed_at,
+                    *input,
+                    effects,
+                    connections,
+                    input_connectors,
+                    parents,
+                )
+            })
+            .collect::<Vec<_>>();
+        derive_color(at, effect, calculated_inputs)
+    }
+
+    fn derive_color(at: Vec2, effect: &Effect, calculated_inputs: Vec<Option<f32>>) -> Option<f32> {
+        let binary_op = |op: &dyn Fn(f32, f32) -> f32| {
+            calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| op(a, b)))
+        };
+        match effect {
+            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => {
+                unreachable!()
+            }
+            Effect::Constant { value } => Some(*value),
+            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
+            Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => calculated_inputs[0],
+            Effect::Add => binary_op(&|a, b| a + b),
+            Effect::Sub => binary_op(&|a, b| a - b),
+            Effect::Mul => binary_op(&|a, b| a * b),
+            Effect::Div => binary_op(&|a, b| a / b),
+            Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
+            Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
+            Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
+            Effect::SimplexNoise { .. } => todo!("Calculate entire texture and cache it."),
+            Effect::WhiteNoise { .. } => todo!("Calculate entire texture and cache it."),
+        }
+    }
+
+    fn transform_coordinate(effect: &Effect, at: Vec2) -> Vec2 {
+        match effect {
             Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => unreachable!(),
             Effect::Constant { .. }
             | Effect::LinearX
@@ -274,47 +320,6 @@ fn update_texture(
                 let y = r * sin;
                 Vec2::new(x, y)
             }
-        };
-
-        let calculated_inputs = inputs
-            .0
-            .iter()
-            .copied()
-            .map(|input: Entity| {
-                calc(
-                    transformed_at,
-                    input,
-                    effects,
-                    connections,
-                    input_connectors,
-                    parents,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let binary_op = |op: &dyn Fn(f32, f32) -> f32| {
-            calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| op(a, b)))
-        };
-        match effect {
-            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => {
-                unreachable!()
-            }
-            Effect::Constant { value } => Some(*value),
-            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
-            Effect::Rotate { .. }
-            | Effect::Offset { .. }
-            | Effect::Scale { .. }
-            | Effect::Cartesian2PolarCoords
-            | Effect::Polar2CartesianCoords => calculated_inputs[0],
-            Effect::Add => binary_op(&|a, b| a + b),
-            Effect::Sub => binary_op(&|a, b| a - b),
-            Effect::Mul => binary_op(&|a, b| a * b),
-            Effect::Div => binary_op(&|a, b| a / b),
-            Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
-            Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
-            Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
-            Effect::SimplexNoise { .. } => todo!("Calculate entire texture and cache it."),
-            Effect::WhiteNoise { .. } => todo!("Calculate entire texture and cache it."),
         }
     }
 
