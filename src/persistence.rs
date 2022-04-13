@@ -112,7 +112,7 @@ pub(crate) fn load_from_file(
                                 false,
                             );
                             cmds.entity(element)
-                                .remove::<Dragging>()
+                                .insert(Draggable)
                                 .insert(Interaction::None);
                             elements.push((element, effect));
                         }
