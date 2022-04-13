@@ -796,7 +796,7 @@ fn create_pipeline_element(
             let text_field = create_text_field(
                 cmds,
                 rect,
-                0.0,
+                effect.parameter(param_idx),
                 (element, param_idx),
                 text_field_material.clone(),
                 mesh_assets,
@@ -1206,6 +1206,47 @@ impl Effect {
             Effect::WhiteNoise { .. } => 16,
             Effect::Cartesian2PolarCoords => 17,
             Effect::Polar2CartesianCoords => 18,
+        }
+    }
+
+    fn parameter(&self, idx: usize) -> f32 {
+        match self {
+            Effect::Constant { value: p } | Effect::Rotate { degrees: p } if idx == 0 => *p,
+            Effect::Offset { x, y } | Effect::Scale { x, y } if idx < 2 => {
+                if idx == 0 {
+                    *x
+                } else {
+                    *y
+                }
+            }
+            Effect::PerlinNoise { seed }
+            | Effect::SimplexNoise { seed }
+            | Effect::WhiteNoise { seed }
+                if idx == 0 =>
+            {
+                *seed as f32
+            }
+            Effect::Constant { .. }
+            | Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::PerlinNoise { .. }
+            | Effect::SimplexNoise { .. }
+            | Effect::WhiteNoise { .. }
+            | Effect::Rgba { .. }
+            | Effect::Hsva { .. }
+            | Effect::Gray { .. }
+            | Effect::LinearX
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => {
+                panic!("Parameter does not exist.")
+            }
         }
     }
 }
