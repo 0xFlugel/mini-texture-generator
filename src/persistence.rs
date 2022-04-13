@@ -100,9 +100,7 @@ pub(crate) fn load_from_file(
 
 fn set_parameters(effect: &mut Effect, parameters: &Vec<f32>) {
     match effect {
-        Effect::PerlinNoise { seed }
-        | Effect::SimplexNoise { seed }
-        | Effect::WhiteNoise { seed } => {
+        Effect::PerlinNoise { seed } => {
             if let Some(p) = parameters.first() {
                 *seed = *p as u32;
             }
@@ -280,13 +278,9 @@ pub(crate) fn save_to_file(
             let inputs: &InputConnectors = inputs;
 
             let parameters = match effect {
-                Effect::PerlinNoise { seed }
-                | Effect::SimplexNoise { seed }
-                | Effect::WhiteNoise { seed } => vec![*seed as f32],
+                Effect::PerlinNoise { seed } => vec![*seed as f32],
                 Effect::Rotate { degrees: p1 } | Effect::Constant { value: p1 } => vec![*p1],
-                Effect::Offset { x, y } | Effect::Scale { x, y } => {
-                    vec![*x, *y]
-                }
+                Effect::Offset { x, y } | Effect::Scale { x, y } => vec![*x, *y],
                 Effect::Rgba { .. }
                 | Effect::Hsva { .. }
                 | Effect::Gray { .. }

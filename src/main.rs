@@ -280,8 +280,6 @@ fn update_texture(
             Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
-            Effect::SimplexNoise { .. } => todo!("Calculate entire texture and cache it."),
-            Effect::WhiteNoise { .. } => todo!("Calculate entire texture and cache it."),
         }
     }
 
@@ -296,9 +294,7 @@ fn update_texture(
             | Effect::Div
             | Effect::SineX
             | Effect::StepX
-            | Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. } => at,
+            | Effect::PerlinNoise { .. } => at,
             Effect::Rotate { degrees } => {
                 // Degrees is more human friendly.
                 let rad = degrees / 360.0 * (2.0 * PI);
@@ -741,8 +737,6 @@ fn create_pipeline_element(
             | Effect::SineX
             | Effect::StepX
             | Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. }
             | Effect::Cartesian2PolarCoords
             | Effect::Polar2CartesianCoords => unreachable!(),
         };
@@ -1056,14 +1050,6 @@ enum Effect {
     PerlinNoise {
         seed: u32,
     },
-    /// More efficient and slightly different than PerlinNoise.
-    SimplexNoise {
-        seed: u32,
-    },
-    /// Intensity value defined by random function.
-    WhiteNoise {
-        seed: u32,
-    },
     /// Transform cartesian coordinates to polar.
     Cartesian2PolarCoords,
     Polar2CartesianCoords,
@@ -1101,8 +1087,6 @@ impl Effect {
             Self::SineX,
             Self::StepX,
             Self::PerlinNoise { seed: 0 },
-            Self::SimplexNoise { seed: 0 },
-            Self::WhiteNoise { seed: 0 },
             Self::Cartesian2PolarCoords,
             Self::Polar2CartesianCoords,
         ]
@@ -1126,8 +1110,6 @@ impl Effect {
             Effect::SineX => "Sine",
             Effect::StepX => "Step",
             Effect::PerlinNoise { .. } => "Perlin Noise",
-            Effect::SimplexNoise { .. } => "Simplex Noise",
-            Effect::WhiteNoise { .. } => "White Noise",
             Effect::Cartesian2PolarCoords => "Cartesian -> Polar Coords",
             Effect::Polar2CartesianCoords => "Polar -> Cartesian Coords",
         }
@@ -1151,8 +1133,6 @@ impl Effect {
             Effect::SineX => 0,
             Effect::StepX => 0,
             Effect::PerlinNoise { .. } => 0,
-            Effect::SimplexNoise { .. } => 0,
-            Effect::WhiteNoise { .. } => 0,
             Effect::Cartesian2PolarCoords => 1,
             Effect::Polar2CartesianCoords => 1,
         }
@@ -1176,8 +1156,6 @@ impl Effect {
             Effect::SineX => 1,
             Effect::StepX => 1,
             Effect::PerlinNoise { .. } => 1,
-            Effect::SimplexNoise { .. } => 1,
-            Effect::WhiteNoise { .. } => 1,
             Effect::Cartesian2PolarCoords => 1,
             Effect::Polar2CartesianCoords => 1,
         }
@@ -1201,9 +1179,7 @@ impl Effect {
             Effect::Constant { .. } => &["Value"],
             Effect::Rotate { .. } => &["Angle"],
             Effect::Offset { .. } | Effect::Scale { .. } => &["X", "Y"],
-            Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. } => &["Seed"],
+            Effect::PerlinNoise { .. } => &["Seed"],
         }
     }
 
@@ -1225,10 +1201,8 @@ impl Effect {
             Effect::SineX => 12,
             Effect::StepX => 13,
             Effect::PerlinNoise { .. } => 14,
-            Effect::SimplexNoise { .. } => 15,
-            Effect::WhiteNoise { .. } => 16,
-            Effect::Cartesian2PolarCoords => 17,
-            Effect::Polar2CartesianCoords => 18,
+            Effect::Cartesian2PolarCoords { .. } => 15,
+            Effect::Polar2CartesianCoords { .. } => 16,
         }
     }
 
@@ -1242,20 +1216,12 @@ impl Effect {
                     *y
                 }
             }
-            Effect::PerlinNoise { seed }
-            | Effect::SimplexNoise { seed }
-            | Effect::WhiteNoise { seed }
-                if idx == 0 =>
-            {
-                *seed as f32
-            }
+            Effect::PerlinNoise { seed } if idx == 0 => *seed as f32,
             Effect::Constant { .. }
             | Effect::Rotate { .. }
             | Effect::Offset { .. }
             | Effect::Scale { .. }
             | Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. }
             | Effect::Rgba { .. }
             | Effect::Hsva { .. }
             | Effect::Gray { .. }

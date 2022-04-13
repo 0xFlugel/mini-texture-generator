@@ -211,8 +211,6 @@ impl TextEntryPlugin {
                             }
                         }
                         Effect::PerlinNoise { seed } => *seed = parsed.round() as u32,
-                        Effect::SimplexNoise { seed } => *seed = parsed.round() as u32,
-                        Effect::WhiteNoise { seed } => *seed = parsed.round() as u32,
                         Effect::Rgba { .. }
                         | Effect::Hsva { .. }
                         | Effect::Gray { .. }
