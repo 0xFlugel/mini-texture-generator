@@ -39,6 +39,7 @@ pub(crate) fn load_from_file(
                         let mut root = root.iter_mut().next().unwrap();
                         *root.translation = *state.view_translation;
                         *root.scale = *state.view_scale;
+
                         let mut elements = vec![];
                         for element in &state.elements {
                             let ElementState {
@@ -50,41 +51,7 @@ pub(crate) fn load_from_file(
                             let effect = {
                                 //TODO Fix pot. panic b/c remove input-data-defined type_id.
                                 let mut effect = Effect::all().remove(*type_id);
-                                match &mut effect {
-                                    Effect::PerlinNoise { seed }
-                                    | Effect::SimplexNoise { seed }
-                                    | Effect::WhiteNoise { seed } => {
-                                        if let Some(p) = parameters.first() {
-                                            *seed = *p as u32;
-                                        }
-                                    }
-                                    Effect::Constant { value: p1 }
-                                    | Effect::Rotate { degrees: p1 } => {
-                                        if let Some(p) = parameters.first() {
-                                            *p1 = *p;
-                                        }
-                                    }
-                                    Effect::Offset { x, y } | Effect::Scale { x, y } => {
-                                        if let Some(p) = parameters.get(0) {
-                                            *x = *p;
-                                        }
-                                        if let Some(p) = parameters.get(1) {
-                                            *y = *p;
-                                        }
-                                    }
-                                    Effect::Rgba { .. }
-                                    | Effect::Hsva { .. }
-                                    | Effect::Gray { .. }
-                                    | Effect::LinearX
-                                    | Effect::Add
-                                    | Effect::Sub
-                                    | Effect::Mul
-                                    | Effect::Div
-                                    | Effect::SineX
-                                    | Effect::StepX
-                                    | Effect::Cartesian2PolarCoords
-                                    | Effect::Polar2CartesianCoords => {}
-                                }
+                                set_parameters(&mut effect, parameters);
                                 effect
                             };
                             let material = material_assets.add(ColorMaterial::from(
@@ -125,6 +92,43 @@ pub(crate) fn load_from_file(
                 Err(e) => eprintln!("Failed to load file \"{}\": {}", path.display(), e),
             }
         }
+    }
+}
+
+fn set_parameters(effect: &mut Effect, parameters: &Vec<f32>) {
+    match effect {
+        Effect::PerlinNoise { seed }
+        | Effect::SimplexNoise { seed }
+        | Effect::WhiteNoise { seed } => {
+            if let Some(p) = parameters.first() {
+                *seed = *p as u32;
+            }
+        }
+        Effect::Constant { value: p1 } | Effect::Rotate { degrees: p1 } => {
+            if let Some(p) = parameters.first() {
+                *p1 = *p;
+            }
+        }
+        Effect::Offset { x, y } | Effect::Scale { x, y } => {
+            if let Some(p) = parameters.get(0) {
+                *x = *p;
+            }
+            if let Some(p) = parameters.get(1) {
+                *y = *p;
+            }
+        }
+        Effect::Rgba { .. }
+        | Effect::Hsva { .. }
+        | Effect::Gray { .. }
+        | Effect::LinearX
+        | Effect::Add
+        | Effect::Sub
+        | Effect::Mul
+        | Effect::Div
+        | Effect::SineX
+        | Effect::StepX
+        | Effect::Cartesian2PolarCoords
+        | Effect::Polar2CartesianCoords => {}
     }
 }
 
