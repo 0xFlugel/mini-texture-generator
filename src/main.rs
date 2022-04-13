@@ -1210,10 +1210,32 @@ impl Effect {
 }
 
 /// IDs for the Mesh2dHandle cache resource.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug)]
 enum MyMeshes {
     EffectType(Effect),
     IoConnector,
+}
+
+impl PartialEq for MyMeshes {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::IoConnector, Self::IoConnector) => true,
+            (Self::EffectType(e1), Self::EffectType(e2)) => e1.ord() == e2.ord(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for MyMeshes {}
+
+impl Hash for MyMeshes {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let id = match self {
+            MyMeshes::EffectType(e) => e.ord() as isize,
+            MyMeshes::IoConnector => -1,
+        };
+        state.write_isize(id);
+    }
 }
 
 impl From<&Effect> for MyMeshes {
