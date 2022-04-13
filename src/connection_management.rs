@@ -122,17 +122,9 @@ pub(crate) fn render_connections(
             let connection: &Connection = connection;
             let mesh: Option<&mut Mesh> = meshes.get_mut((*mesh).clone().0);
 
-            let out_transform = connectors
-                .get(connection.output_connector.entity()).ok()?;
-            // Y=+-1 because the mesh is a unit square and the connection attaches above or below.
-            // Multiplying with the global transform puts it into the reference frame, i.e. window.
-            let from = out_transform.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
-            let in_transform = connectors.get(connection.input_connector.entity()).ok()?;
-            let to = in_transform.mul_vec3(Vec3::new(0.0, -1.0, 0.0));
-
-            let line_mesh = gen_line(&[from, to]);
+            let (from, to) = calc_line_end_points(connection, connectors)?;
             if let Some(mesh) = mesh {
-                *mesh = line_mesh;
+                *mesh = gen_line(&[from, to]);
             } else {
                 eprintln!("failed to update connection mesh.");
             }
@@ -148,6 +140,19 @@ pub(crate) fn render_connections(
         &connectors,
         &mut meshes,
     );
+}
+
+pub(crate) fn calc_line_end_points(
+    connection: &Connection,
+    connectors: &Query<&GlobalTransform>,
+) -> Option<(Vec3, Vec3)> {
+    let out_transform = connectors.get(connection.output_connector.entity()).ok()?;
+    let in_transform = connectors.get(connection.input_connector.entity()).ok()?;
+    // Y=+-1 because the mesh is a unit square and the connection attaches above or below.
+    // Multiplying with the global transform puts it into the reference frame, i.e. window.
+    let from = out_transform.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+    let to = in_transform.mul_vec3(Vec3::new(0.0, -1.0, 0.0));
+    Some((from, to))
 }
 
 /// A system to scale up an input connector when dragging a connection over it.
@@ -433,19 +438,19 @@ pub(crate) struct FloatingConnectorBundle {
 #[derive(Bundle)]
 pub(crate) struct ConnectionBundle {
     /// The essential data that is manipulated by user interactions.
-    connection: Connection,
+    pub(crate) connection: Connection,
     /// Should be generated via [gen_line].
-    mesh: Mesh2dHandle,
-    material: Handle<ColorMaterial>,
-    transform: Transform,
-    global_transform: GlobalTransform,
-    visibility: Visibility,
-    comp_vis: ComputedVisibility,
+    pub(crate) mesh: Mesh2dHandle,
+    pub(crate) material: Handle<ColorMaterial>,
+    pub(crate) transform: Transform,
+    pub(crate) global_transform: GlobalTransform,
+    pub(crate) visibility: Visibility,
+    pub(crate) comp_vis: ComputedVisibility,
 }
 
 /// Return a mesh that forms a line draw on screen based on point forming a curve.
 //TODO Extend to generate a spline.
-fn gen_line(points: &[Vec3]) -> Mesh {
+pub(crate) fn gen_line(points: &[Vec3]) -> Mesh {
     let mut mesh = Mesh::new(PrimitiveTopology::LineStrip);
     if points.len() < 2 {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 0]);

@@ -15,19 +15,23 @@
 
 mod connection_management;
 mod interaction;
+mod persistence;
 mod text_entry;
 mod util;
 
 use crate::connection_management::{delete_connection, Connection};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
+use bevy::core::FixedTimestep;
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::math::XY;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Mesh2dHandle;
+use bevy::transform::TransformSystem;
 use bevy::utils::HashSet;
 use bevy_mod_raycast::{DefaultPluginState, RayCastMesh, RayCastSource};
+use clap::{Parser, ValueHint};
 use connection_management::{InputConnector, InputConnectors, OutputConnector, OutputConnectors};
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::collections::HashMap;
@@ -35,6 +39,7 @@ use std::f32::consts::PI;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::ops::Deref;
+use std::path::PathBuf;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
@@ -74,12 +79,39 @@ const LOCAL_TO_GPU_BYTE_ORDER: &dyn Fn(f32) -> [u8; 4] = &f32::to_le_bytes;
 
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
 
+#[derive(Debug, Clone, Parser)]
+struct Args {
+    /// The file to load from.
+    #[clap(value_hint = ValueHint::AnyPath)]
+    file: Option<PathBuf>,
+    /// Number of minutes between auto-saves. Deactivated when not set.
+    #[clap(long, short)]
+    autosave: Option<f32>,
+    /// The file to save to when auto-saving and when closing the program.
+    #[clap(long, short, default_value = "autosave.ron", value_hint = ValueHint::FilePath)]
+    save_to: PathBuf,
+}
+
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
+    let args: Args = Args::parse();
+    let mut app = App::new();
+    // setup for loading and saving.
+    //TODO add a system to react to closing request and set a save!-flag.
+    app.insert_resource(args.clone())
+        .add_system(persistence::load_from_file)
+        .add_system(persistence::connect_loaded_effects.after(TransformSystem::TransformPropagate));
+    if let Some(minutes) = args.autosave {
+        app.add_system_set(
+            SystemSet::new()
+                .with_system(persistence::save_to_file.exclusive_system().at_end())
+                .with_run_criteria(FixedTimestep::step(minutes as f64 * 60.0)),
+        );
+    }
+    // setup for normal running
+    app.add_plugins(DefaultPlugins)
         .add_plugin(InteractionPlugin)
         .add_plugin(TextEntryPlugin)
-        .add_startup_system(setup)
+        .add_startup_system_set(SystemSet::new().with_system(setup))
         .add_system(create_element)
         .add_system(connection_management::start_connecting)
         .add_system(connection_management::render_connections)
@@ -87,8 +119,8 @@ fn main() {
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
-        .add_system(right_click_deletes_element)
-        .run();
+        .add_system(right_click_deletes_element);
+    app.run();
 }
 
 /// Delete a pipeline element by right clicking.
@@ -764,7 +796,7 @@ fn create_pipeline_element(
             let text_field = create_text_field(
                 cmds,
                 rect,
-                0.0,
+                effect.parameter(param_idx),
                 (element, param_idx),
                 text_field_material.clone(),
                 mesh_assets,
@@ -1176,18 +1208,59 @@ impl Effect {
             Effect::Polar2CartesianCoords => 18,
         }
     }
+
+    fn parameter(&self, idx: usize) -> f32 {
+        match self {
+            Effect::Constant { value: p } | Effect::Rotate { degrees: p } if idx == 0 => *p,
+            Effect::Offset { x, y } | Effect::Scale { x, y } if idx < 2 => {
+                if idx == 0 {
+                    *x
+                } else {
+                    *y
+                }
+            }
+            Effect::PerlinNoise { seed }
+            | Effect::SimplexNoise { seed }
+            | Effect::WhiteNoise { seed }
+                if idx == 0 =>
+            {
+                *seed as f32
+            }
+            Effect::Constant { .. }
+            | Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::PerlinNoise { .. }
+            | Effect::SimplexNoise { .. }
+            | Effect::WhiteNoise { .. }
+            | Effect::Rgba { .. }
+            | Effect::Hsva { .. }
+            | Effect::Gray { .. }
+            | Effect::LinearX
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => {
+                panic!("Parameter does not exist.")
+            }
+        }
+    }
 }
 
 /// IDs for the Mesh2dHandle cache resource.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Eq, PartialEq, Hash)]
 enum MyMeshes {
-    EffectType(Effect),
+    EffectType(usize),
     IoConnector,
 }
 
 impl From<&Effect> for MyMeshes {
     fn from(e: &Effect) -> Self {
-        Self::EffectType(e.clone())
+        Self::EffectType(e.ord())
     }
 }
 
