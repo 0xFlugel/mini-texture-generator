@@ -234,7 +234,7 @@ pub(crate) fn save_to_file(
         >,
         connections: &Query<&Connection>,
         output_connectors: &Query<(&OutputConnector, &Parent)>,
-        input_connections: &Query<&InputConnector>,
+        input_connectors: &Query<&InputConnector>,
     ) -> Vec<ElementState> {
         type OutputConnectorIndex = ConnectorIndex;
         type InputConnectorIndex = ConnectorIndex;
@@ -249,7 +249,7 @@ pub(crate) fn save_to_file(
         for (entity, _, _, inputs, _) in elements.iter() {
             for (idx, input) in inputs.0.iter().enumerate() {
                 let key: (Entity, InputConnectorIndex) = (entity, idx);
-                if let &InputConnector(Some(connection)) = input_connections.get(*input).unwrap() {
+                if let &InputConnector(Some(connection)) = input_connectors.get(*input).unwrap() {
                     let output_connector = connections
                         .get(connection)
                         .unwrap()
