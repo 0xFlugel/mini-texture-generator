@@ -37,7 +37,9 @@ use connection_management::{InputConnector, InputConnectors, OutputConnector, Ou
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::collections::HashMap;
 use std::f32::consts::PI;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
+use std::io::{BufWriter, Write};
 use std::mem::size_of;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -71,12 +73,14 @@ const SCALE_FACTOR: f32 = 1.2;
 /// Global data defines. Used to make `create_image_entity` work with the same allocation size and
 /// interpretaion as `update_teture`.
 type PixelData = [f32; 4];
+/// GPU texture format. Data is exported as RGB as `[u8; 3]`, without the alpha component.
 const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
 
 //TODO This is specific to my GPU architecture, I think. I have a Radeon, though. So little-endian
 // may be correct for Intel (integrated), AMD and NVidia GPUs. Refrence:
 // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#hardware-implementation
 const LOCAL_TO_GPU_BYTE_ORDER: &dyn Fn(f32) -> [u8; 4] = &f32::to_le_bytes;
+const GPU_TO_LOCAL_BYTE_ORDER: &dyn Fn([u8; 4]) -> f32 = &f32::from_le_bytes;
 
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
 
@@ -122,6 +126,7 @@ fn main() {
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
+        .add_system(save_image)
         .add_system(right_click_deletes_element);
     app.run();
 }
@@ -139,6 +144,76 @@ fn autosave(mut meta_events: EventWriter<MetaEvent>) {
 enum MetaEvent {
     /// Save the current state to file.
     Save,
+}
+
+/// Save generated images with a click to a new file with a random name.
+fn save_image(
+    images: Query<(&MyInteraction, &Handle<ColorMaterial>), Changed<MyInteraction>>,
+    material_assets: Res<Assets<ColorMaterial>>,
+    image_assets: Res<Assets<Image>>,
+) {
+    fn write_ppm_image(
+        writer: &mut impl Write,
+        data: &[u8],
+        size: Size<u32>,
+    ) -> Result<(), std::io::Error> {
+        fn float2byte(f: &f32) -> u8 {
+            // Convert to 0..=255. Exact 1.0 is clamped to 255 as well.
+            // The alternative would be rounding, but that would make 0 and 255 rarer than
+            // others, i.e. it would not be an equal distribution.
+            (*f * (u8::MAX as f32 + 1.0)).round().min(u8::MAX as f32) as u8
+        }
+
+        assert_eq!(size_of::<f32>(), 4);
+
+        writeln!(writer, "P6 {} {} 255", size.width, size.height)?;
+        let floats = data
+            .chunks(size_of::<f32>())
+            .into_iter()
+            .map(|a| [a[0], a[1], a[2], a[3]])
+            .map(GPU_TO_LOCAL_BYTE_ORDER)
+            .collect::<Vec<f32>>();
+        writer.write(
+            &floats
+                // Drop alpha channel from RGBA pixels
+                .chunks(4)
+                .flat_map(|rgba| &rgba[..3])
+                .map(float2byte)
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(())
+    }
+
+    let paths = (0..)
+        .map(|i| PathBuf::from(format!("{}.ppm", i)))
+        .filter(|p| !p.exists());
+    let images = images
+        .iter()
+        .filter(|(act, _)| act == &&MyInteraction::PressedLeft)
+        .filter_map(|(_, material)| {
+            material_assets
+                .get(material)
+                .and_then(|mat| mat.texture.as_ref())
+                .and_then(|img_handle| image_assets.get(img_handle.clone()))
+        });
+    for (img, path) in images.zip(paths) {
+        match File::create(path.as_path()) {
+            Ok(file) => {
+                if let Err(e) = write_ppm_image(
+                    &mut BufWriter::new(file),
+                    &img.data,
+                    Size::new(TEXTURE_SIZE, TEXTURE_SIZE),
+                ) {
+                    eprintln!(
+                        "Failed to export image to file \"{}\": {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+            Err(e) => eprintln!("Cannot create image file \"{}\": {}", path.display(), e),
+        }
+    }
 }
 
 /// Delete a pipeline element by right clicking.
@@ -240,50 +315,14 @@ fn update_texture(
         let previous = parents.get(output_connector).ok()?.0;
         let (effect, inputs): (&Effect, &InputConnectors) = effects.get(previous).ok()?;
 
-        let transformed_at = match effect {
-            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => unreachable!(),
-            Effect::Constant { .. }
-            | Effect::LinearX
-            | Effect::Add
-            | Effect::Sub
-            | Effect::Mul
-            | Effect::Div
-            | Effect::SineX
-            | Effect::StepX
-            | Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. } => at,
-            Effect::Rotate { degrees } => {
-                // Degrees is more human friendly.
-                let rad = degrees / 360.0 * (2.0 * PI);
-                let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
-                (rotation * at.extend(1.0)).truncate()
-            }
-            Effect::Offset { x, y } => at + Vec2::new(*x, *y),
-            Effect::Scale { x, y } => at * Vec2::new(*x, *y),
-            Effect::Cartesian2PolarCoords => {
-                let [x, y] = at.to_array();
-                let r = (x * x + y * y).sqrt();
-                let phi = (y / x).atan();
-                Vec2::new(r, phi)
-            }
-            Effect::Polar2CartesianCoords => {
-                let [r, phi] = at.to_array();
-                let (sin, cos) = phi.sin_cos();
-                let x = r * cos;
-                let y = r * sin;
-                Vec2::new(x, y)
-            }
-        };
-
+        let transformed_at = transform_coordinate(effect, at);
         let calculated_inputs = inputs
             .0
             .iter()
-            .copied()
-            .map(|input: Entity| {
+            .map(|input| {
                 calc(
                     transformed_at,
-                    input,
+                    *input,
                     effects,
                     connections,
                     input_connectors,
@@ -291,7 +330,10 @@ fn update_texture(
                 )
             })
             .collect::<Vec<_>>();
+        derive_color(at, effect, calculated_inputs)
+    }
 
+    fn derive_color(at: Vec2, effect: &Effect, calculated_inputs: Vec<Option<f32>>) -> Option<f32> {
         let binary_op = |op: &dyn Fn(f32, f32) -> f32| {
             calculated_inputs[0].and_then(|a| calculated_inputs[1].map(|b| op(a, b)))
         };
@@ -313,8 +355,42 @@ fn update_texture(
             Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
-            Effect::SimplexNoise { .. } => todo!("Calculate entire texture and cache it."),
-            Effect::WhiteNoise { .. } => todo!("Calculate entire texture and cache it."),
+        }
+    }
+
+    fn transform_coordinate(effect: &Effect, at: Vec2) -> Vec2 {
+        match effect {
+            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => unreachable!(),
+            Effect::Constant { .. }
+            | Effect::LinearX
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX
+            | Effect::PerlinNoise { .. } => at,
+            Effect::Rotate { degrees } => {
+                // Degrees is more human friendly.
+                let rad = degrees / 360.0 * (2.0 * PI);
+                let rotation = Transform::from_rotation(Quat::from_rotation_z(rad));
+                (rotation * at.extend(1.0)).truncate()
+            }
+            Effect::Offset { x, y } => at + Vec2::new(*x, *y),
+            Effect::Scale { x, y } => at * Vec2::new(*x, *y),
+            Effect::Cartesian2PolarCoords => {
+                let [x, y] = at.to_array();
+                let r = (x * x + y * y).sqrt();
+                let phi = (y / x).atan();
+                Vec2::new(r, phi)
+            }
+            Effect::Polar2CartesianCoords => {
+                let [r, phi] = at.to_array();
+                let (sin, cos) = phi.sin_cos();
+                let x = r * cos;
+                let y = r * sin;
+                Vec2::new(x, y)
+            }
         }
     }
 
@@ -357,19 +433,19 @@ fn update_texture(
                             inputs[0].unwrap_or(0.0),
                             inputs[1].unwrap_or(0.0),
                             inputs[2].unwrap_or(0.0),
-                            inputs[3].unwrap_or(1.0),
+                            1.0,
                         ),
                         Effect::Hsva { .. } => Color::hsla(
                             inputs[0].unwrap_or(0.0),
                             inputs[1].unwrap_or(1.0),
                             inputs[2].unwrap_or(0.5),
-                            inputs[3].unwrap_or(1.0),
+                            1.0,
                         ),
                         Effect::Gray { .. } => Color::rgba(
                             inputs[0].unwrap_or(0.0),
                             inputs[0].unwrap_or(0.0),
                             inputs[0].unwrap_or(0.0),
-                            inputs[1].unwrap_or(1.0),
+                            1.0,
                         ),
                         _ => unreachable!(),
                     };
@@ -714,6 +790,8 @@ fn create_pipeline_element(
         ));
         let (texture, image_handle) =
             create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
+        cmds.entity(texture)
+            .insert_bundle(InteractionBundle::default());
         let linked = match effect {
             Effect::Rgba { .. } => Effect::Rgba {
                 target: Some(image_handle),
@@ -736,8 +814,6 @@ fn create_pipeline_element(
             | Effect::SineX
             | Effect::StepX
             | Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. }
             | Effect::Cartesian2PolarCoords
             | Effect::Polar2CartesianCoords => unreachable!(),
         };
@@ -1051,14 +1127,6 @@ enum Effect {
     PerlinNoise {
         seed: u32,
     },
-    /// More efficient and slightly different than PerlinNoise.
-    SimplexNoise {
-        seed: u32,
-    },
-    /// Intensity value defined by random function.
-    WhiteNoise {
-        seed: u32,
-    },
     /// Transform cartesian coordinates to polar.
     Cartesian2PolarCoords,
     Polar2CartesianCoords,
@@ -1096,8 +1164,6 @@ impl Effect {
             Self::SineX,
             Self::StepX,
             Self::PerlinNoise { seed: 0 },
-            Self::SimplexNoise { seed: 0 },
-            Self::WhiteNoise { seed: 0 },
             Self::Cartesian2PolarCoords,
             Self::Polar2CartesianCoords,
         ]
@@ -1121,8 +1187,6 @@ impl Effect {
             Effect::SineX => "Sine",
             Effect::StepX => "Step",
             Effect::PerlinNoise { .. } => "Perlin Noise",
-            Effect::SimplexNoise { .. } => "Simplex Noise",
-            Effect::WhiteNoise { .. } => "White Noise",
             Effect::Cartesian2PolarCoords => "Cartesian -> Polar Coords",
             Effect::Polar2CartesianCoords => "Polar -> Cartesian Coords",
         }
@@ -1131,9 +1195,9 @@ impl Effect {
     /// The number of input connections for the variant.
     fn inputs(&self) -> usize {
         match self {
-            Effect::Rgba { .. } => 4,
-            Effect::Hsva { .. } => 4,
-            Effect::Gray { .. } => 2,
+            Effect::Rgba { .. } => 3,
+            Effect::Hsva { .. } => 3,
+            Effect::Gray { .. } => 1,
             Effect::Constant { .. } => 0,
             Effect::LinearX => 0,
             Effect::Rotate { .. } => 1,
@@ -1146,8 +1210,6 @@ impl Effect {
             Effect::SineX => 0,
             Effect::StepX => 0,
             Effect::PerlinNoise { .. } => 0,
-            Effect::SimplexNoise { .. } => 0,
-            Effect::WhiteNoise { .. } => 0,
             Effect::Cartesian2PolarCoords => 1,
             Effect::Polar2CartesianCoords => 1,
         }
@@ -1171,8 +1233,6 @@ impl Effect {
             Effect::SineX => 1,
             Effect::StepX => 1,
             Effect::PerlinNoise { .. } => 1,
-            Effect::SimplexNoise { .. } => 1,
-            Effect::WhiteNoise { .. } => 1,
             Effect::Cartesian2PolarCoords => 1,
             Effect::Polar2CartesianCoords => 1,
         }
@@ -1196,9 +1256,7 @@ impl Effect {
             Effect::Constant { .. } => &["Value"],
             Effect::Rotate { .. } => &["Angle"],
             Effect::Offset { .. } | Effect::Scale { .. } => &["X", "Y"],
-            Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. } => &["Seed"],
+            Effect::PerlinNoise { .. } => &["Seed"],
         }
     }
 
@@ -1220,10 +1278,8 @@ impl Effect {
             Effect::SineX => 12,
             Effect::StepX => 13,
             Effect::PerlinNoise { .. } => 14,
-            Effect::SimplexNoise { .. } => 15,
-            Effect::WhiteNoise { .. } => 16,
-            Effect::Cartesian2PolarCoords => 17,
-            Effect::Polar2CartesianCoords => 18,
+            Effect::Cartesian2PolarCoords { .. } => 15,
+            Effect::Polar2CartesianCoords { .. } => 16,
         }
     }
 
@@ -1237,20 +1293,12 @@ impl Effect {
                     *y
                 }
             }
-            Effect::PerlinNoise { seed }
-            | Effect::SimplexNoise { seed }
-            | Effect::WhiteNoise { seed }
-                if idx == 0 =>
-            {
-                *seed as f32
-            }
+            Effect::PerlinNoise { seed } if idx == 0 => *seed as f32,
             Effect::Constant { .. }
             | Effect::Rotate { .. }
             | Effect::Offset { .. }
             | Effect::Scale { .. }
             | Effect::PerlinNoise { .. }
-            | Effect::SimplexNoise { .. }
-            | Effect::WhiteNoise { .. }
             | Effect::Rgba { .. }
             | Effect::Hsva { .. }
             | Effect::Gray { .. }
