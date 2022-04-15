@@ -715,6 +715,8 @@ fn create_pipeline_element(
         ));
         let (texture, image_handle) =
             create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
+        cmds.entity(texture)
+            .insert_bundle(InteractionBundle::default());
         let linked = match effect {
             Effect::Rgba { .. } => Effect::Rgba {
                 target: Some(image_handle),
