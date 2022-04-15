@@ -37,7 +37,9 @@ use connection_management::{InputConnector, InputConnectors, OutputConnector, Ou
 use interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
 use std::collections::HashMap;
 use std::f32::consts::PI;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
+use std::io::{BufWriter, Write};
 use std::mem::size_of;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -71,12 +73,14 @@ const SCALE_FACTOR: f32 = 1.2;
 /// Global data defines. Used to make `create_image_entity` work with the same allocation size and
 /// interpretaion as `update_teture`.
 type PixelData = [f32; 4];
+/// GPU texture format. Data is exported as RGB as `[u8; 3]`, without the alpha component.
 const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
 
 //TODO This is specific to my GPU architecture, I think. I have a Radeon, though. So little-endian
 // may be correct for Intel (integrated), AMD and NVidia GPUs. Refrence:
 // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#hardware-implementation
 const LOCAL_TO_GPU_BYTE_ORDER: &dyn Fn(f32) -> [u8; 4] = &f32::to_le_bytes;
+const GPU_TO_LOCAL_BYTE_ORDER: &dyn Fn([u8; 4]) -> f32 = &f32::from_le_bytes;
 
 //TODO Turn inserting multiple components on new entities into bundels for better readability.
 
@@ -122,6 +126,7 @@ fn main() {
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
+        .add_system(save_image)
         .add_system(right_click_deletes_element);
     app.run();
 }
@@ -139,6 +144,76 @@ fn autosave(mut meta_events: EventWriter<MetaEvent>) {
 enum MetaEvent {
     /// Save the current state to file.
     Save,
+}
+
+/// Save generated images with a click to a new file with a random name.
+fn save_image(
+    images: Query<(&MyInteraction, &Handle<ColorMaterial>), Changed<MyInteraction>>,
+    material_assets: Res<Assets<ColorMaterial>>,
+    image_assets: Res<Assets<Image>>,
+) {
+    fn write_ppm_image(
+        writer: &mut impl Write,
+        data: &[u8],
+        size: Size<u32>,
+    ) -> Result<(), std::io::Error> {
+        fn float2byte(f: &f32) -> u8 {
+            // Convert to 0..=255. Exact 1.0 is clamped to 255 as well.
+            // The alternative would be rounding, but that would make 0 and 255 rarer than
+            // others, i.e. it would not be an equal distribution.
+            (*f * (u8::MAX as f32 + 1.0)).round().min(u8::MAX as f32) as u8
+        }
+
+        assert_eq!(size_of::<f32>(), 4);
+
+        writeln!(writer, "P6 {} {} 255", size.width, size.height)?;
+        let floats = data
+            .chunks(size_of::<f32>())
+            .into_iter()
+            .map(|a| [a[0], a[1], a[2], a[3]])
+            .map(GPU_TO_LOCAL_BYTE_ORDER)
+            .collect::<Vec<f32>>();
+        writer.write(
+            &floats
+                // Drop alpha channel from RGBA pixels
+                .chunks(4)
+                .flat_map(|rgba| &rgba[..3])
+                .map(float2byte)
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(())
+    }
+
+    let paths = (0..)
+        .map(|i| PathBuf::from(format!("{}.ppm", i)))
+        .filter(|p| !p.exists());
+    let images = images
+        .iter()
+        .filter(|(act, _)| act == &&MyInteraction::PressedLeft)
+        .filter_map(|(_, material)| {
+            material_assets
+                .get(material)
+                .and_then(|mat| mat.texture.as_ref())
+                .and_then(|img_handle| image_assets.get(img_handle.clone()))
+        });
+    for (img, path) in images.zip(paths) {
+        match File::create(path.as_path()) {
+            Ok(file) => {
+                if let Err(e) = write_ppm_image(
+                    &mut BufWriter::new(file),
+                    &img.data,
+                    Size::new(TEXTURE_SIZE, TEXTURE_SIZE),
+                ) {
+                    eprintln!(
+                        "Failed to export image to file \"{}\": {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+            Err(e) => eprintln!("Cannot create image file \"{}\": {}", path.display(), e),
+        }
+    }
 }
 
 /// Delete a pipeline element by right clicking.
