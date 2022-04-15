@@ -1126,6 +1126,9 @@ enum Effect {
     /// A typical noise patter that still has dependency between neighboring intensity values.
     PerlinNoise {
         seed: u32,
+        /// Cache for the computed grid of values. Changing a parameter will reset the cache.
+        /// The first dimension is in X direction, the second in Y, thus use `cache[x][y]`.
+        cache: Option<[[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize]>,
     },
     /// Transform cartesian coordinates to polar.
     Cartesian2PolarCoords,
@@ -1163,7 +1166,10 @@ impl Effect {
             Self::Div,
             Self::SineX,
             Self::StepX,
-            Self::PerlinNoise { seed: 0 },
+            Self::PerlinNoise {
+                seed: 0,
+                cache: None,
+            },
             Self::Cartesian2PolarCoords,
             Self::Polar2CartesianCoords,
         ]
@@ -1293,7 +1299,7 @@ impl Effect {
                     *y
                 }
             }
-            Effect::PerlinNoise { seed } if idx == 0 => *seed as f32,
+            Effect::PerlinNoise { seed, .. } if idx == 0 => *seed as f32,
             Effect::Constant { .. }
             | Effect::Rotate { .. }
             | Effect::Offset { .. }
