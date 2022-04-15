@@ -358,19 +358,19 @@ fn update_texture(
                             inputs[0].unwrap_or(0.0),
                             inputs[1].unwrap_or(0.0),
                             inputs[2].unwrap_or(0.0),
-                            inputs[3].unwrap_or(1.0),
+                            1.0,
                         ),
                         Effect::Hsva { .. } => Color::hsla(
                             inputs[0].unwrap_or(0.0),
                             inputs[1].unwrap_or(1.0),
                             inputs[2].unwrap_or(0.5),
-                            inputs[3].unwrap_or(1.0),
+                            1.0,
                         ),
                         Effect::Gray { .. } => Color::rgba(
                             inputs[0].unwrap_or(0.0),
                             inputs[0].unwrap_or(0.0),
                             inputs[0].unwrap_or(0.0),
-                            inputs[1].unwrap_or(1.0),
+                            1.0,
                         ),
                         _ => unreachable!(),
                     };
@@ -1118,9 +1118,9 @@ impl Effect {
     /// The number of input connections for the variant.
     fn inputs(&self) -> usize {
         match self {
-            Effect::Rgba { .. } => 4,
-            Effect::Hsva { .. } => 4,
-            Effect::Gray { .. } => 2,
+            Effect::Rgba { .. } => 3,
+            Effect::Hsva { .. } => 3,
+            Effect::Gray { .. } => 1,
             Effect::Constant { .. } => 0,
             Effect::LinearX => 0,
             Effect::Rotate { .. } => 1,
