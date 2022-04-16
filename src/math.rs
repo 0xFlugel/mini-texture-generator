@@ -131,7 +131,7 @@ pub(crate) fn fill_simplex_noise(seed: u32) -> TexData {
         return 70.0 * (n0 + n1 + n2);
     }
 
-    let random: Vec<i32> = std::iter::successors(Some(0xACE1_u16), |lfsr| {
+    let random: Vec<i32> = std::iter::successors(Some(0xACE1u16), |lfsr| {
         let mut lfsr = *lfsr;
         lfsr ^= lfsr >> 7;
         lfsr ^= lfsr << 9;
@@ -143,7 +143,7 @@ pub(crate) fn fill_simplex_noise(seed: u32) -> TexData {
     .take(256)
     .collect();
 
-    let perm = (0..512).map(|i| random[i & 0x0FF]).collect::<Vec<_>>();
+    let perm = (0..512).map(|i| random[i % random.len()]).collect::<Vec<_>>();
 
     let mut data = TexData::default();
     for x in 0..TEXTURE_SIZE as usize {
