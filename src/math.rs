@@ -1,11 +1,10 @@
 use crate::TEXTURE_SIZE;
 use bevy::prelude::*;
 
+pub(crate) type TexData = [[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize];
+
 /// Sample a grid of values with bi-linear interpolation and clamping.
-pub(crate) fn sample(
-    at: Vec2,
-    pixels: &[[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize],
-) -> f32 {
+pub(crate) fn sample(at: Vec2, pixels: &TexData) -> f32 {
     let zero = Vec2::splat(0.0);
     let one = Vec2::splat(1.0);
     let max = Vec2::splat(TEXTURE_SIZE as f32);
@@ -27,8 +26,6 @@ fn lerp(a: f32, b: f32, alpha: f32) -> f32 {
 }
 
 /// Generate a texture with simplex noise based on a `seed`.
-pub(crate) fn fill_simplex_noise(
-    seed: u32,
-) -> [[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize] {
+pub(crate) fn fill_simplex_noise(seed: u32) -> TexData {
     todo!()
 }
