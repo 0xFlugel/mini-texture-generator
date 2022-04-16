@@ -15,12 +15,14 @@
 
 mod connection_management;
 mod interaction;
+mod math;
 mod persistence;
 mod text_entry;
 mod util;
 
 use crate::connection_management::{delete_connection, Connection};
 use crate::interaction::{InteractionPlugin, Scroll};
+use crate::math::{fill_simplex_noise, sample};
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::core::FixedTimestep;
 use bevy::ecs::event::{Events, ManualEventReader};
@@ -366,28 +368,6 @@ fn update_texture(
         }
     }
 
-    /// Sample a grid of values with bi-linear interpolation and clamping.
-    fn sample(at: Vec2, pixels: &[[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize]) -> f32 {
-        let zero = Vec2::splat(0.0);
-        let one = Vec2::splat(1.0);
-        let max = Vec2::splat(TEXTURE_SIZE as f32);
-
-        let tl = at.floor().clamp(zero, max).to_array().map(|f| f as usize);
-        let br = (at.floor() + one)
-            .clamp(zero, max)
-            .to_array()
-            .map(|f| f as usize);
-        let lerp_factor = at - at.floor();
-
-        let a = lerp(pixels[tl[0]][tl[1]], pixels[tl[0]][br[1]], lerp_factor.y);
-        let b = lerp(pixels[br[0]][tl[1]], pixels[br[0]][br[1]], lerp_factor.y);
-        lerp(a, b, lerp_factor.x)
-    }
-
-    fn lerp(a: f32, b: f32, alpha: f32) -> f32 {
-        a * alpha + b * (1.0 - alpha)
-    }
-
     fn transform_coordinate(effect: &Effect, at: Vec2) -> Vec2 {
         match effect {
             Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => unreachable!(),
@@ -484,11 +464,6 @@ fn update_texture(
             }
         }
     }
-}
-
-/// Generate a texture with simplex noise based on a `seed`.
-fn fill_simplex_noise(seed: u32) -> [[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize] {
-    todo!()
 }
 
 /// A system to create new pipeline elements by copying the clicked sidebar element and initializing
