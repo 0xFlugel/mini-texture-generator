@@ -210,7 +210,7 @@ impl TextEntryPlugin {
                                 *y = parsed
                             }
                         }
-                        Effect::PerlinNoise { seed, .. } => *seed = parsed.round() as u32,
+                        Effect::SimplexNoise { seed, .. } => *seed = parsed.round() as u32,
                         Effect::Rgba { .. }
                         | Effect::Hsva { .. }
                         | Effect::Gray { .. }

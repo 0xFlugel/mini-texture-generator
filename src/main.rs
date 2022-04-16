@@ -41,8 +41,9 @@ use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::{BufWriter, Write};
 use std::mem::size_of;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::sync::RwLock;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
@@ -354,8 +355,37 @@ fn update_texture(
             Effect::Div => binary_op(&|a, b| a / b),
             Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
-            Effect::PerlinNoise { .. } => todo!("Calculate entire texture and cache it."),
+            Effect::SimplexNoise { seed, cache, .. } => Some(sample(
+                at,
+                cache
+                    .write()
+                    .expect("locking error")
+                    .deref_mut()
+                    .get_or_insert_with(|| fill_simplex_noise(*seed)),
+            )),
         }
+    }
+
+    /// Sample a grid of values with bi-linear interpolation and clamping.
+    fn sample(at: Vec2, pixels: &[[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize]) -> f32 {
+        let zero = Vec2::splat(0.0);
+        let one = Vec2::splat(1.0);
+        let max = Vec2::splat(TEXTURE_SIZE as f32);
+
+        let tl = at.floor().clamp(zero, max).to_array().map(|f| f as usize);
+        let br = (at.floor() + one)
+            .clamp(zero, max)
+            .to_array()
+            .map(|f| f as usize);
+        let lerp_factor = at - at.floor();
+
+        let a = lerp(pixels[tl[0]][tl[1]], pixels[tl[0]][br[1]], lerp_factor.y);
+        let b = lerp(pixels[br[0]][tl[1]], pixels[br[0]][br[1]], lerp_factor.y);
+        lerp(a, b, lerp_factor.x)
+    }
+
+    fn lerp(a: f32, b: f32, alpha: f32) -> f32 {
+        a * alpha + b * (1.0 - alpha)
     }
 
     fn transform_coordinate(effect: &Effect, at: Vec2) -> Vec2 {
@@ -369,7 +399,7 @@ fn update_texture(
             | Effect::Div
             | Effect::SineX
             | Effect::StepX
-            | Effect::PerlinNoise { .. } => at,
+            | Effect::SimplexNoise { .. } => at,
             Effect::Rotate { degrees } => {
                 // Degrees is more human friendly.
                 let rad = degrees / 360.0 * (2.0 * PI);
@@ -454,6 +484,11 @@ fn update_texture(
             }
         }
     }
+}
+
+/// Generate a texture with simplex noise based on a `seed`.
+fn fill_simplex_noise(seed: u32) -> [[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize] {
+    todo!()
 }
 
 /// A system to create new pipeline elements by copying the clicked sidebar element and initializing
@@ -813,7 +848,7 @@ fn create_pipeline_element(
             | Effect::Div
             | Effect::SineX
             | Effect::StepX
-            | Effect::PerlinNoise { .. }
+            | Effect::SimplexNoise { .. }
             | Effect::Cartesian2PolarCoords
             | Effect::Polar2CartesianCoords => unreachable!(),
         };
@@ -1071,7 +1106,7 @@ fn create_image_entity(
     (image, handle)
 }
 
-#[derive(Debug, Clone, Component)]
+#[derive(Debug, Component)]
 enum Effect {
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
@@ -1124,15 +1159,48 @@ enum Effect {
     /// Step function in X direction, stepping at X=0 from intensity zero to one.
     StepX,
     /// A typical noise patter that still has dependency between neighboring intensity values.
-    PerlinNoise {
+    SimplexNoise {
         seed: u32,
         /// Cache for the computed grid of values. Changing a parameter will reset the cache.
         /// The first dimension is in X direction, the second in Y, thus use `cache[x][y]`.
-        cache: Option<[[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize]>,
+        cache: RwLock<Option<[[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize]>>,
     },
     /// Transform cartesian coordinates to polar.
     Cartesian2PolarCoords,
     Polar2CartesianCoords,
+}
+
+impl Clone for Effect {
+    fn clone(&self) -> Self {
+        match self {
+            Effect::Rgba { target } => Effect::Rgba {
+                target: (*target).clone(),
+            },
+            Effect::Hsva { target } => Effect::Hsva {
+                target: (*target).clone(),
+            },
+            Effect::Gray { target } => Effect::Gray {
+                target: (*target).clone(),
+            },
+            Effect::Constant { value } => Effect::Constant { value: *value },
+            Effect::LinearX => Effect::LinearX,
+            Effect::Rotate { degrees } => Effect::Rotate { degrees: *degrees },
+            Effect::Offset { x, y } => Effect::Offset { x: *x, y: *y },
+            Effect::Scale { x, y } => Effect::Scale { x: *x, y: *y },
+            Effect::Add => Effect::Add,
+            Effect::Sub => Effect::Sub,
+            Effect::Mul => Effect::Mul,
+            Effect::Div => Effect::Div,
+            Effect::SineX => Effect::SineX,
+            Effect::StepX => Effect::StepX,
+            Effect::SimplexNoise { seed, cache: _ } => Effect::SimplexNoise {
+                seed: *seed,
+                cache: RwLock::new(None),
+            },
+            Effect::Cartesian2PolarCoords => Effect::Cartesian2PolarCoords,
+            Effect::Polar2CartesianCoords => Effect::Polar2CartesianCoords,
+        }
+    }
 }
 
 /// Implement equality as being the same variant to be useful for [HashMap]s.
@@ -1166,9 +1234,9 @@ impl Effect {
             Self::Div,
             Self::SineX,
             Self::StepX,
-            Self::PerlinNoise {
+            Self::SimplexNoise {
                 seed: 0,
-                cache: None,
+                cache: RwLock::new(None),
             },
             Self::Cartesian2PolarCoords,
             Self::Polar2CartesianCoords,
@@ -1192,7 +1260,7 @@ impl Effect {
             Effect::Div => "Div",
             Effect::SineX => "Sine",
             Effect::StepX => "Step",
-            Effect::PerlinNoise { .. } => "Perlin Noise",
+            Effect::SimplexNoise { .. } => "Perlin Noise",
             Effect::Cartesian2PolarCoords => "Cartesian -> Polar Coords",
             Effect::Polar2CartesianCoords => "Polar -> Cartesian Coords",
         }
@@ -1215,7 +1283,7 @@ impl Effect {
             Effect::Div => 2,
             Effect::SineX => 0,
             Effect::StepX => 0,
-            Effect::PerlinNoise { .. } => 0,
+            Effect::SimplexNoise { .. } => 0,
             Effect::Cartesian2PolarCoords => 1,
             Effect::Polar2CartesianCoords => 1,
         }
@@ -1238,7 +1306,7 @@ impl Effect {
             Effect::Div => 1,
             Effect::SineX => 1,
             Effect::StepX => 1,
-            Effect::PerlinNoise { .. } => 1,
+            Effect::SimplexNoise { .. } => 1,
             Effect::Cartesian2PolarCoords => 1,
             Effect::Polar2CartesianCoords => 1,
         }
@@ -1262,7 +1330,7 @@ impl Effect {
             Effect::Constant { .. } => &["Value"],
             Effect::Rotate { .. } => &["Angle"],
             Effect::Offset { .. } | Effect::Scale { .. } => &["X", "Y"],
-            Effect::PerlinNoise { .. } => &["Seed"],
+            Effect::SimplexNoise { .. } => &["Seed"],
         }
     }
 
@@ -1283,7 +1351,7 @@ impl Effect {
             Effect::Div => 11,
             Effect::SineX => 12,
             Effect::StepX => 13,
-            Effect::PerlinNoise { .. } => 14,
+            Effect::SimplexNoise { .. } => 14,
             Effect::Cartesian2PolarCoords { .. } => 15,
             Effect::Polar2CartesianCoords { .. } => 16,
         }
@@ -1299,12 +1367,12 @@ impl Effect {
                     *y
                 }
             }
-            Effect::PerlinNoise { seed, .. } if idx == 0 => *seed as f32,
+            Effect::SimplexNoise { seed, .. } if idx == 0 => *seed as f32,
             Effect::Constant { .. }
             | Effect::Rotate { .. }
             | Effect::Offset { .. }
             | Effect::Scale { .. }
-            | Effect::PerlinNoise { .. }
+            | Effect::SimplexNoise { .. }
             | Effect::Rgba { .. }
             | Effect::Hsva { .. }
             | Effect::Gray { .. }
