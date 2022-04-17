@@ -204,17 +204,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy6"
-version = "0.2.0"
-dependencies = [
- "bevy",
- "bevy_mod_raycast",
- "clap",
- "ron",
- "serde",
-]
-
-[[package]]
 name = "bevy_animation"
 version = "0.7.0-dev"
 source = "git+https://github.com/bevyengine/bevy?rev=193e8c4ada2c324b5222735b0c558398bbbea196#193e8c4ada2c324b5222735b0c558398bbbea196"
@@ -1924,6 +1913,17 @@ dependencies = [
  "foreign-types",
  "log",
  "objc",
+]
+
+[[package]]
+name = "mini-texture-generator"
+version = "0.3.0"
+dependencies = [
+ "bevy",
+ "bevy_mod_raycast",
+ "clap",
+ "ron",
+ "serde",
 ]
 
 [[package]]
