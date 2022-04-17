@@ -1,5 +1,5 @@
 use crate::interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
-use crate::{SidebarElement, HIGHLIGHT_SCALING};
+use crate::{RootTransform, SidebarElement, HIGHLIGHT_SCALING};
 use bevy::ecs::query::QueryEntityError;
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
@@ -26,6 +26,7 @@ pub(crate) fn start_connecting(
     >,
     meshes: Query<&Mesh2dHandle>,
     materials: Query<&Handle<ColorMaterial>>,
+    root: Query<(Entity, &Transform), With<RootTransform>>,
     mouse_pos: Res<MousePosition>,
     mut mesh_assets: ResMut<Assets<Mesh>>,
 ) {
@@ -39,7 +40,9 @@ pub(crate) fn start_connecting(
         let translation = Vec3::from(transform.translation);
         let mut connections: Mut<OutputConnector> = connections;
 
-        let transform = Transform::from_translation(translation);
+        let (root_entity, root_transform) = root.iter().next().unwrap();
+        let inverted_root = Transform::from_matrix(root_transform.compute_matrix().inverse());
+        let transform = inverted_root * Transform::from_translation(translation);
         let material = materials
             .get(connector)
             .expect("connector has no material.");
@@ -63,7 +66,8 @@ pub(crate) fn start_connecting(
                 ComputedVisibility::default(),
             ))
             .id();
-        let outgoing = cmds
+        cmds.entity(root_entity).add_child(floating); //Enable root transformations
+        let outgoing_connection = cmds
             .spawn_bundle(ConnectionBundle {
                 connection: Connection {
                     output_connector: ConnectionAttachment::Connector(connector),
@@ -78,10 +82,10 @@ pub(crate) fn start_connecting(
             })
             .id();
         cmds.entity(floating).insert(FloatingConnector {
-            connection: outgoing,
+            connection: outgoing_connection,
             drop_on: None,
         });
-        connections.0.push(outgoing);
+        connections.0.push(outgoing_connection);
     }
 }
 
