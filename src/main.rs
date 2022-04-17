@@ -45,7 +45,7 @@ use std::io::{BufWriter, Write};
 use std::mem::size_of;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::Mutex;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
@@ -359,7 +359,7 @@ fn update_texture(
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::SimplexNoise { cache, seed: _, .. } => Some(
                 cache
-                    .write()
+                    .lock()
                     .expect("locking error")
                     .deref_mut()
                     .sample(at.x, at.y),
@@ -1135,7 +1135,7 @@ enum Effect {
     /// A typical noise patter that still has dependency between neighboring intensity values.
     SimplexNoise {
         seed: u32,
-        cache: RwLock<SimplexSampler>,
+        cache: Mutex<SimplexSampler>,
     },
     /// Transform cartesian coordinates to polar.
     Cartesian2PolarCoords,
@@ -1167,7 +1167,7 @@ impl Clone for Effect {
             Effect::StepX => Effect::StepX,
             Effect::SimplexNoise { seed, cache: _ } => Effect::SimplexNoise {
                 seed: *seed,
-                cache: RwLock::new(SimplexSampler::new(*seed)),
+                cache: Mutex::new(SimplexSampler::new(*seed)),
             },
             Effect::Cartesian2PolarCoords => Effect::Cartesian2PolarCoords,
             Effect::Polar2CartesianCoords => Effect::Polar2CartesianCoords,
@@ -1208,7 +1208,7 @@ impl Effect {
             Self::StepX,
             Self::SimplexNoise {
                 seed: 0,
-                cache: RwLock::new(SimplexSampler::new(0)),
+                cache: Mutex::new(SimplexSampler::new(0)),
             },
             Self::Cartesian2PolarCoords,
             Self::Polar2CartesianCoords,
