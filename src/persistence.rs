@@ -21,7 +21,7 @@ use std::io::Write;
 /// Thus we use a local run-once flag.
 pub(crate) fn load_from_file(
     mut cmds: Commands,
-    mut root: Query<&mut Transform, With<RootTransform>>,
+    mut root: Query<(Entity, &mut Transform), With<RootTransform>>,
     effect_sizes: Query<(&Effect, &ElementSize)>,
     mut material_assets: ResMut<Assets<ColorMaterial>>,
     mut image_assets: ResMut<Assets<Image>>,
@@ -39,9 +39,9 @@ pub(crate) fn load_from_file(
             match bytes {
                 Ok(bytes) => match ron::de::from_bytes::<SaveState>(&bytes) {
                     Ok(state) => {
-                        let mut root = root.iter_mut().next().unwrap();
-                        *root.translation = *state.view_translation;
-                        *root.scale = *state.view_scale;
+                        let (root_entity, mut root_transform) = root.iter_mut().next().unwrap();
+                        *root_transform.translation = *state.view_translation;
+                        *root_transform.scale = *state.view_scale;
 
                         let mut elements = vec![];
                         for element in &state.elements {
@@ -84,6 +84,10 @@ pub(crate) fn load_from_file(
                             cmds.entity(element)
                                 .insert(Draggable)
                                 .insert(Interaction::None);
+
+                            // Enable root transformations.
+                            cmds.entity(root_entity).add_child(element);
+
                             elements.push((element, effect));
                         }
                         cmds.insert_resource((elements, state.elements));
@@ -100,7 +104,7 @@ pub(crate) fn load_from_file(
 
 fn set_parameters(effect: &mut Effect, parameters: &Vec<f32>) {
     match effect {
-        Effect::PerlinNoise { seed } => {
+        Effect::SimplexNoise { seed, .. } => {
             if let Some(p) = parameters.first() {
                 *seed = *p as u32;
             }
@@ -278,7 +282,7 @@ pub(crate) fn save_to_file(
             let inputs: &InputConnectors = inputs;
 
             let parameters = match effect {
-                Effect::PerlinNoise { seed } => vec![*seed as f32],
+                Effect::SimplexNoise { seed, .. } => vec![*seed as f32],
                 Effect::Rotate { degrees: p1 } | Effect::Constant { value: p1 } => vec![*p1],
                 Effect::Offset { x, y } | Effect::Scale { x, y } => vec![*x, *y],
                 Effect::Rgba { .. }

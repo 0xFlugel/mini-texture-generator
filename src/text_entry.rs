@@ -210,7 +210,13 @@ impl TextEntryPlugin {
                                 *y = parsed
                             }
                         }
-                        Effect::PerlinNoise { seed } => *seed = parsed.round() as u32,
+                        Effect::SimplexNoise { seed, cache } => {
+                            *seed = parsed.round() as u32;
+                            cache
+                                .get_mut()
+                                .expect("Failed to get lock on cache.")
+                                .change_seed(*seed);
+                        }
                         Effect::Rgba { .. }
                         | Effect::Hsva { .. }
                         | Effect::Gray { .. }
