@@ -22,7 +22,7 @@ mod util;
 
 use crate::connection_management::{delete_connection, Connection};
 use crate::interaction::{InteractionPlugin, Scroll};
-use crate::math::{fill_simplex_noise, sample};
+use crate::math::SimplexSampler;
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
 use bevy::core::FixedTimestep;
 use bevy::ecs::event::{Events, ManualEventReader};
@@ -357,14 +357,13 @@ fn update_texture(
             Effect::Div => binary_op(&|a, b| a / b),
             Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
-            Effect::SimplexNoise { seed, cache, .. } => Some(sample(
-                at,
+            Effect::SimplexNoise { cache, seed: _, .. } => Some(
                 cache
                     .write()
                     .expect("locking error")
                     .deref_mut()
-                    .get_or_insert_with(|| fill_simplex_noise(*seed)),
-            )),
+                    .sample(at.x, at.y),
+            ),
         }
     }
 
@@ -1136,9 +1135,7 @@ enum Effect {
     /// A typical noise patter that still has dependency between neighboring intensity values.
     SimplexNoise {
         seed: u32,
-        /// Cache for the computed grid of values. Changing a parameter will reset the cache.
-        /// The first dimension is in X direction, the second in Y, thus use `cache[x][y]`.
-        cache: RwLock<Option<[[f32; TEXTURE_SIZE as usize]; TEXTURE_SIZE as usize]>>,
+        cache: RwLock<SimplexSampler>,
     },
     /// Transform cartesian coordinates to polar.
     Cartesian2PolarCoords,
@@ -1170,7 +1167,7 @@ impl Clone for Effect {
             Effect::StepX => Effect::StepX,
             Effect::SimplexNoise { seed, cache: _ } => Effect::SimplexNoise {
                 seed: *seed,
-                cache: RwLock::new(None),
+                cache: RwLock::new(SimplexSampler::new(*seed)),
             },
             Effect::Cartesian2PolarCoords => Effect::Cartesian2PolarCoords,
             Effect::Polar2CartesianCoords => Effect::Polar2CartesianCoords,
@@ -1211,7 +1208,7 @@ impl Effect {
             Self::StepX,
             Self::SimplexNoise {
                 seed: 0,
-                cache: RwLock::new(None),
+                cache: RwLock::new(SimplexSampler::new(0)),
             },
             Self::Cartesian2PolarCoords,
             Self::Polar2CartesianCoords,

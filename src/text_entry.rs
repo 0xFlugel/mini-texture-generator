@@ -212,7 +212,10 @@ impl TextEntryPlugin {
                         }
                         Effect::SimplexNoise { seed, cache } => {
                             *seed = parsed.round() as u32;
-                            *cache.write().expect("Failed to get write lock on cache.") = None;
+                            cache
+                                .write()
+                                .expect("Failed to get write lock on cache.")
+                                .change_seed(*seed);
                         }
                         Effect::Rgba { .. }
                         | Effect::Hsva { .. }
