@@ -107,7 +107,7 @@ fn main() {
     app.insert_resource(args.clone())
         .init_resource::<Events<MetaEvent>>()
         .add_system(persistence::load_from_file)
-        .add_system(persistence::connect_loaded_effects.after(TransformSystem::TransformPropagate))
+        .add_system(persistence::connect_loaded_effects)
         .add_system(shutdown)
         .add_system(persistence::save_to_file.exclusive_system().at_end());
     if let Some(minutes) = args.autosave {
@@ -124,7 +124,10 @@ fn main() {
         .add_startup_system_set(SystemSet::new().with_system(setup))
         .add_system(create_element)
         .add_system(connection_management::start_connecting)
-        .add_system(connection_management::render_connections)
+        .add_system_to_stage(
+            CoreStage::PostUpdate,
+            connection_management::render_connections.after(TransformSystem::TransformPropagate),
+        )
         .add_system(connection_management::highlight_connection_acceptor)
         .add_system(connection_management::finish_connection)
         .add_system(update_texture)
