@@ -151,6 +151,8 @@ impl InteractionPlugin {
         mut mouse_wheels: EventReader<MouseWheel>,
         mut prev_position: Local<Option<Vec2>>,
         interactions: Query<&MyInteraction>,
+        windows: Res<Windows>,
+        cam: Query<&Camera>,
     ) {
         // Always read the events as they are stored up if not.
         let scale_units = mouse_wheels.iter().fold(0.0, |acc, elem| {
@@ -170,7 +172,25 @@ impl InteractionPlugin {
 
         if shall_affect_root {
             if let Some(mut transform) = root.iter_mut().next() {
-                transform.scale *= Vec2::splat(SCALE_FACTOR.powf(scale_units)).extend(1.0);
+                // Scaling (at cursor position).
+                if scale_units.abs() > 0.5 {
+                    let window = windows.get_primary().unwrap();
+                    let window_size = Vec2::new(window.width(), window.height());
+                    let cam = cam.iter().next().unwrap();
+
+                    // Project cursor position into world coordinate system.
+                    let fix_point = Transform::from_matrix(cam.projection_matrix.inverse())
+                        * (Vec2::splat(-1.0) + mouse_position.position / window_size * 2.0)
+                            .extend(0.0);
+
+                    let scale = Vec2::splat(SCALE_FACTOR.powf(scale_units)).extend(1.0);
+                    *transform = Transform::from_translation(fix_point)
+                        * Transform::from_scale(scale)
+                        * Transform::from_translation(-fix_point)
+                        * *transform;
+                }
+
+                // Dragging
                 if mouse_buttons.pressed(MouseButton::Left) {
                     let current_position = mouse_position.position;
                     let translation = (*prev_position)
