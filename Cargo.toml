@@ -1,13 +1,12 @@
 [package]
 name = "mini-texture-generator"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { git = "https://github.com/bevyengine/bevy", rev = "193e8c4ada2c324b5222735b0c558398bbbea196", features = ["dynamic"] } # Remove the dynamic feature for debugging.
-#bevy = { git = "https://github.com/bevyengine/bevy", rev = "193e8c4ada2c324b5222735b0c558398bbbea196" }
+bevy = { version = "0.7", features = ["dynamic"] } # Remove the dynamic feature for debugging.
 
 # There is a fork with a better way of doing my modification on github, but I leave this because of possible version
 # mismatches.
