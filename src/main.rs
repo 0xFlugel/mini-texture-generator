@@ -57,6 +57,8 @@ use std::sync::Mutex;
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
 const SIDEBAR_WIDTH: f32 = 0.15;
+/// Width of the connections in pixels.
+const LINE_WIDTH: f32 = 2.0;
 
 /// The relative path after "/assets" in the project folder -- which containts the Cargo.toml.
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
