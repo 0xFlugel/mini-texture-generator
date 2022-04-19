@@ -435,10 +435,12 @@ fn update_texture(
         };
         if let Some((image, size)) = image_size {
             let center = Vec2::new(size.width as f32, size.height as f32) / 2.0;
-            let index_to_pixel_center_offset = Vec2::splat(0.5);
+            let subpixel_offset = Vec2::splat(0.5);
             for x in 0..size.width {
                 for y in 0..size.height {
-                    let at = Vec2::new(x as f32, y as f32) - center + index_to_pixel_center_offset;
+                    let at = (Vec2::new(x as f32, y as f32) - center + subpixel_offset)
+                        // Normalize coords (-1..=1).
+                        / Vec2::new(size.width as f32, size.height as f32);
                     let inputs = inputs
                         .0
                         .iter()
