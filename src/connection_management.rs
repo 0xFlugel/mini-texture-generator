@@ -1,5 +1,5 @@
 use crate::interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
-use crate::{Dirty, RootTransform, SidebarElement, HIGHLIGHT_SCALING};
+use crate::{Dirty, RootTransform, SidebarElement, HIGHLIGHT_SCALING, LINE_WIDTH};
 use bevy::ecs::query::QueryEntityError;
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
@@ -537,30 +537,48 @@ pub(crate) struct ConnectionBundle {
 }
 
 /// Return a mesh that forms a line draw on screen based on point forming a curve.
-//TODO Extend to generate a spline.
 pub(crate) fn gen_line(points: &[Vec3]) -> Mesh {
-    let mut mesh = Mesh::new(PrimitiveTopology::LineStrip);
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleStrip);
     if points.len() < 2 {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 0]);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0; 3]; 0]);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0; 3]; 0]);
     } else {
-        mesh.insert_attribute(
-            Mesh::ATTRIBUTE_POSITION,
-            points.iter().map(Vec3::to_array).collect::<Vec<_>>(),
-        );
+        let base = points[0];
+        let target = points[1];
+        let diff = target - base;
+        let vertices = (0..=50)
+            .map(|i| i as f32 / 50.0)
+            .map(|factor| {
+                (
+                    1.0 - ((factor * std::f32::consts::PI).cos() + 1.0) / 2.0,
+                    factor,
+                )
+            })
+            .map(|(x, y)| base + Vec3::new(diff.x * x, diff.y * y, diff.z * x))
+            .scan(base.truncate(), |prev, curr| {
+                let delta = Transform::from_rotation(Quat::from_rotation_z(
+                    -(curr.truncate() - *prev).angle_between(Vec2::new(0.0, 1.0)),
+                )) * Vec3::new(LINE_WIDTH / 2.0, 0.0, 0.0);
+                *prev = curr.truncate();
+                Some([curr - delta, curr + delta])
+            })
+            .flatten()
+            .map(|v| v.to_array())
+            .collect::<Vec<_>>();
         mesh.insert_attribute(
             Mesh::ATTRIBUTE_NORMAL,
             std::iter::repeat([0.0, 0.0, 1.0])
-                .take(points.len())
+                .take(vertices.len())
                 .collect::<Vec<_>>(),
         );
         mesh.insert_attribute(
             Mesh::ATTRIBUTE_UV_0,
             std::iter::repeat([0.0, 0.0])
-                .take(points.len())
+                .take(vertices.len())
                 .collect::<Vec<_>>(),
         );
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     }
     mesh
 }
