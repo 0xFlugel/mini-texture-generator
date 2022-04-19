@@ -8,6 +8,7 @@ use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension};
 use bevy::sprite::Mesh2dHandle;
+use bevy::transform::TransformSystem;
 use bevy_mod_raycast::RayCastMesh;
 use std::collections::{HashMap, HashSet};
 
@@ -469,26 +470,58 @@ pub(crate) struct FakeText {
 
 /// A component for a dummy entity that is used as an anchor for correctly place *and scale* text
 /// without aliasing issues.
-#[derive(Debug, Clone, Component)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Component)]
 pub(crate) struct TextDummy {
     real: Entity,
 }
 
-/// A system to apply transformations to text entities based on the corresponding [TextDummy]
-/// entities.
-pub(crate) fn update_text_transform(
-    dummies: Query<(&GlobalTransform, &TextDummy), Changed<GlobalTransform>>,
-    mut texts: Query<(&mut Transform, &mut GlobalTransform, &mut Text), Without<TextDummy>>,
-) {
-    for (transform, dummy) in dummies.iter() {
-        if let Ok((mut local, mut global, mut text)) = texts.get_mut(dummy.real) {
-            local.translation = transform.translation;
-            global.translation = transform.translation;
-            for section in &mut text.sections {
-                section.style.font_size =
-                    DEFAULT_FONT_SIZE * transform.scale.truncate().min_element();
+pub(crate) struct TextFixPlugin;
+
+impl Plugin for TextFixPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system_set_to_stage(
+            CoreStage::PostUpdate,
+            SystemSet::new()
+                .with_system(Self::update_text_transform)
+                .after(TransformSystem::TransformPropagate),
+        )
+        .add_system(Self::synchronized_delete_text);
+    }
+}
+
+impl TextFixPlugin {
+    /// A system to apply transformations to text entities based on the corresponding [TextDummy]
+    /// entities.
+    pub(crate) fn update_text_transform(
+        dummies: Query<(&GlobalTransform, &TextDummy), Changed<GlobalTransform>>,
+        mut texts: Query<(&mut Transform, &mut GlobalTransform, &mut Text), Without<TextDummy>>,
+    ) {
+        for (transform, dummy) in dummies.iter() {
+            if let Ok((mut local, mut global, mut text)) = texts.get_mut(dummy.real) {
+                local.translation = transform.translation;
+                global.translation = transform.translation;
+                for section in &mut text.sections {
+                    section.style.font_size =
+                        DEFAULT_FONT_SIZE * transform.scale.truncate().min_element();
+                }
             }
         }
+    }
+
+    /// Delete the real [Text] when the [DummyText] does not exist any more.
+    ///
+    /// # Impl Note
+    ///
+    /// `last` holds the (real) text entities that where referenced by
+    pub(crate) fn synchronized_delete_text(
+        mut cmds: Commands,
+        dummies: Query<&TextDummy>,
+        mut last: Local<HashSet<TextDummy>>,
+    ) {
+        let current = HashSet::from_iter(dummies.iter().copied());
+        last.difference(&current)
+            .for_each(|deleted| cmds.entity(deleted.real).despawn());
+        *last = current;
     }
 }
 

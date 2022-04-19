@@ -31,7 +31,7 @@ use crate::connection_management::{delete_connection, Connection, ConnectionAtta
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::math::SimplexSampler;
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
-use crate::util::{create_pipeline_element, delete_pipeline_element, gen_colors};
+use crate::util::{create_pipeline_element, delete_pipeline_element, gen_colors, TextFixPlugin};
 use bevy::core::FixedTimestep;
 use bevy::ecs::event::Events;
 use bevy::math::XY;
@@ -129,6 +129,7 @@ fn main() {
     app.add_plugins(DefaultPlugins)
         .add_plugin(InteractionPlugin)
         .add_plugin(TextEntryPlugin)
+        .add_plugin(TextFixPlugin)
         .add_startup_system_set(SystemSet::new().with_system(setup))
         .add_system(create_element)
         .add_system(connection_management::start_connecting)
@@ -142,13 +143,7 @@ fn main() {
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
         .add_system(save_image)
-        .add_system(right_click_deletes_element)
-        .add_system_set_to_stage(
-            CoreStage::PostUpdate,
-            SystemSet::new()
-                .with_system(util::update_text_transform)
-                .after(TransformSystem::TransformPropagate),
-        );
+        .add_system(right_click_deletes_element);
     app.run();
 }
 
