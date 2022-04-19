@@ -56,7 +56,7 @@ use std::sync::Mutex;
 
 const SIDEBAR_BACKGROUND: [f32; 3] = [0.5, 0.5, 0.5];
 /// The width of the sidebar in normalized coords (-1..1).
-const SIDEBAR_WIDTH: f32 = 0.2;
+const SIDEBAR_WIDTH: f32 = 0.15;
 
 /// The relative path after "/assets" in the project folder -- which containts the Cargo.toml.
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
@@ -67,11 +67,11 @@ const DEFAULT_FONT_SIZE: f32 = 15.0;
 ///
 /// Specifies how much space is used per "line" in the rectangle. This must practically be greater
 /// than 1.0 to accommodate the decorations of text entry boxes.
-const LINE_HEIGHT: f32 = 1.25 * DEFAULT_FONT_SIZE;
+const LINE_HEIGHT: f32 = 1.1 * DEFAULT_FONT_SIZE;
 /// Size of the square shape for input and output connectors.
 const IO_PAD_SIZE: f32 = 2. / 3. * LINE_HEIGHT;
 /// The scaling factor for highlighting connector drop off points on hovering.
-const HIGHLIGHT_SCALING: f32 = 1.5;
+const HIGHLIGHT_SCALING: f32 = 2.0;
 
 /// Number of pixels in each direction of the 2D texture.
 const DEFAULT_TEXTURE_SIZE: Size<u32> = Size {
