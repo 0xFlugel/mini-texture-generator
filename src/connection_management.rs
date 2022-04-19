@@ -165,10 +165,13 @@ pub(crate) fn calc_line_end_points(
 /// slightly missing an accepting drop-off point.
 #[allow(clippy::type_complexity)]
 pub(crate) fn highlight_connection_acceptor(
-    inputs: Query<&Parent, With<InputConnector>>,
-    outputs: Query<&Parent, With<OutputConnector>>,
+    input_parents: Query<&Parent, With<InputConnector>>,
+    output_parents: Query<&Parent, With<OutputConnector>>,
     mut floating_connectors: Query<&mut FloatingConnector>,
     connections: Query<&Connection>,
+    effect_input_connectors: Query<&InputConnectors>,
+    input_connector_connections: Query<&InputConnector>,
+    connector_parents: Query<&Parent, Or<(With<InputConnector>, With<OutputConnector>)>>,
     mut transforms: Query<(&mut Transform, &GlobalTransform)>,
     interaction_changed: Query<
         (Entity, &MyInteraction),
@@ -179,28 +182,85 @@ pub(crate) fn highlight_connection_acceptor(
     >,
     mut highlighted: Local<HashMap<Entity, Transform>>,
 ) {
+    /// Check whether the `candidate` effect is contained in the dependency tree of the `origin`
+    /// effect.
+    fn is_dependency_element(
+        origin: Entity,
+        candidate: Entity,
+        connections: &Query<&Connection>,
+        effect_input_connectors: &Query<&InputConnectors>,
+        input_connector_connections: &Query<&InputConnector>,
+        connector_parents: &Query<&Parent, Or<(With<InputConnector>, With<OutputConnector>)>>,
+    ) -> bool {
+        let direct_dependencies = effect_input_connectors
+            .get(origin)
+            .unwrap()
+            .0
+            .iter()
+            // Resolve input connector to opposite output connector.
+            .filter_map(|input| {
+                input_connector_connections
+                    .get(*input)
+                    .unwrap()
+                    .0
+                    .map(|connection| {
+                        connections
+                            .get(connection)
+                            .unwrap()
+                            .output_connector
+                            .entity()
+                    })
+            })
+            // Silently skip potential floating connectors.
+            .filter_map(|output_connector| connector_parents.get(output_connector).ok())
+            // Resolve to effect.
+            .map(|parent| parent.0)
+            .collect::<Vec<_>>();
+        direct_dependencies.contains(&candidate)
+            || direct_dependencies.into_iter().any(|origin| {
+                is_dependency_element(
+                    origin,
+                    candidate,
+                    connections,
+                    effect_input_connectors,
+                    input_connector_connections,
+                    connector_parents,
+                )
+            })
+    }
+
     // Update drop_on field.
     // Depends on the `highlighted` data from the last update.
     if let Some(mut f) = floating_connectors.iter_mut().next() {
         for (connector, interaction) in interaction_changed.iter() {
-            if let Ok(hover_parent) = inputs.get(connector).or_else(|_| outputs.get(connector)) {
+            if let Ok(hover_parent) = input_parents
+                .get(connector)
+                .or_else(|_| output_parents.get(connector))
+            {
                 // Only consider IO connectors for the open connection end.
-                let is_other_element = match connections.get(f.connection) {
-                    Ok(Connection {
+                let fixed_parent = match connections.get(f.connection).unwrap() {
+                    Connection {
                         input_connector: ConnectionAttachment::Floating(_),
-                        output_connector: ConnectionAttachment::Connector(other_end),
-                    }) => outputs
-                        .get(*other_end)
-                        .map_or(true, |parent| parent != hover_parent),
-                    Ok(Connection {
-                        input_connector: ConnectionAttachment::Connector(other_end),
+                        output_connector: ConnectionAttachment::Connector(fixed_end),
+                    } => output_parents.get(*fixed_end).unwrap(),
+                    Connection {
+                        input_connector: ConnectionAttachment::Connector(fixed_end),
                         output_connector: ConnectionAttachment::Floating(_),
-                    }) => inputs
-                        .get(*other_end)
-                        .map_or(true, |parent| parent != hover_parent),
-                    _ => false,
+                    } => input_parents.get(*fixed_end).unwrap(),
+                    // A dragged connection has exactly one floating connector.
+                    _ => unreachable!(),
                 };
-                if is_other_element {
+                let is_other_element = fixed_parent != hover_parent;
+                // Forbid cycles, as they would create infinite loops in [crate::update_texture].
+                let would_create_cycle = is_dependency_element(
+                    fixed_parent.0,
+                    hover_parent.0,
+                    &connections,
+                    &effect_input_connectors,
+                    &input_connector_connections,
+                    &connector_parents,
+                );
+                if is_other_element && !would_create_cycle {
                     match *interaction {
                         MyInteraction::Hover => {
                             f.drop_on = Some(connector);
