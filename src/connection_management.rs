@@ -330,7 +330,7 @@ pub(crate) fn finish_connection(
                         // Was dropped on output connector.
                         (ConnectionAttachment::Connector(_), ConnectionAttachment::Floating(_)) => {
                             #[rustfmt::skip]
-                                outputs.get_mut(*drop_connector).unwrap().0.push(*connection);
+                            outputs.get_mut(*drop_connector).unwrap().0.push(*connection);
                             connections.get_mut(*connection).unwrap().output_connector =
                                 ConnectionAttachment::Connector(*drop_connector);
                         }
@@ -338,7 +338,7 @@ pub(crate) fn finish_connection(
                         (ConnectionAttachment::Floating(_), ConnectionAttachment::Connector(_)) => {
                             if let Some(previous) = inputs.get(*drop_connector).unwrap().0 {
                                 #[rustfmt::skip]
-                                    delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs);
+                                delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs);
                             }
                             inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
                             connections.get_mut(*connection).unwrap().input_connector =
@@ -348,7 +348,7 @@ pub(crate) fn finish_connection(
                         _ => {
                             eprintln!("Deleted a connection with illegal state.");
                             #[rustfmt::skip]
-                                delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs);
+                            delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs);
                         }
                     }
                 } else {
