@@ -3,8 +3,8 @@ use crate::connection_management::{
 };
 use crate::{
     create_pipeline_element, gen_colors, Args, Connection, Draggable, Effect, ElementSize,
-    InputConnector, InputConnectors, MetaEvent, MyMeshes, OutputConnector, OutputConnectors,
-    RootTransform, SidebarElement,
+    InputConnector, InputConnectors, MetaEvent, MyInteraction, MyMeshes, OutputConnector,
+    OutputConnectors, RootTransform, SidebarElement,
 };
 use bevy::prelude::*;
 use bevy::sprite::Mesh2dHandle;
@@ -83,7 +83,7 @@ pub(crate) fn load_from_file(
                             );
                             cmds.entity(element)
                                 .insert(Draggable)
-                                .insert(Interaction::None);
+                                .insert(MyInteraction::None);
 
                             // Enable root transformations.
                             cmds.entity(root_entity).add_child(element);
