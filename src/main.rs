@@ -1,17 +1,16 @@
 //! This project is a tool to create textures by generating with runtime-parameters in a GUI.
-//! It is inspired by ".werkzeug" by the group ".farbrausch", but should have a more beautiful GUI.
+//! It is inspired by ".werkzeug" by the group ".farbrausch".
 //!
 //! # Implementation Details
 //!
 //! The generator pipeline is defined by its elements which are in turn defined in the ECS as
-//! UI-nodes with the components: [Effect], [InputConnector]s and [OutputConnector]s.
-//!
-//! The connectors are start and end points for [Connection]s which connect exactly one input to one
-//! output connector. A connection has a [Color] that is defined by its starting point, the output
-//! connector id. Thus, all connections that transmit the same value have the same color. TODO
+//! entities with [Effect], [InputConnector]s and [OutputConnector]s. These are connected via their
+//! connector entities, which have [InputConnector] or [OutputConnector] components, in combination
+//! with [Connection]s. Connections connect exactly one input to one output connector.
 //!
 //! A texture is generated based on a consuming [Effect], i.e. one that has no output.
-//! [InputConnector]s without a [Connection] will assume a value of zero.
+//! [InputConnector]s without a [Connection] will assume a default value (for consuming effects)
+//! or stop the calculation (for intermediate effects).
 
 mod connection_management;
 mod interaction;
