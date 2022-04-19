@@ -233,23 +233,34 @@ pub(crate) fn highlight_connection_acceptor(
     // Depends on the `highlighted` data from the last update.
     if let Some(mut f) = floating_connectors.iter_mut().next() {
         for (connector, interaction) in interaction_changed.iter() {
-            if let Ok(hover_parent) = input_parents
-                .get(connector)
-                .or_else(|_| output_parents.get(connector))
-            {
-                // Only consider IO connectors for the open connection end.
+            // Inputs must lead to outputs and outputs must lead to inputs. There cannot be
+            // output-output or input-input connections. Only consider IO connectors (of the other
+            // type) for the open connection end.
+            let parents = if let Ok(hover_parent) = input_parents.get(connector) {
                 let fixed_parent = match connections.get(f.connection).unwrap() {
                     Connection {
                         input_connector: ConnectionAttachment::Floating(_),
                         output_connector: ConnectionAttachment::Connector(fixed_end),
-                    } => output_parents.get(*fixed_end).unwrap(),
+                    } => output_parents.get(*fixed_end).ok(),
+                    // A dragged connection has exactly one floating connector.
+                    _ => None,
+                };
+                fixed_parent.map(|f| (hover_parent, f))
+            } else if let Ok(hover_parent) = output_parents.get(connector) {
+                // Only consider IO connectors (of the other type) for the open connection end.
+                let fixed_parent = match connections.get(f.connection).unwrap() {
                     Connection {
                         input_connector: ConnectionAttachment::Connector(fixed_end),
                         output_connector: ConnectionAttachment::Floating(_),
-                    } => input_parents.get(*fixed_end).unwrap(),
+                    } => input_parents.get(*fixed_end).ok(),
                     // A dragged connection has exactly one floating connector.
-                    _ => unreachable!(),
+                    _ => None,
                 };
+                fixed_parent.map(|f| (hover_parent, f))
+            } else {
+                None
+            };
+            if let Some((hover_parent, fixed_parent)) = parents {
                 let is_other_element = fixed_parent != hover_parent;
                 // Forbid cycles, as they would create infinite loops in [crate::update_texture].
                 let would_create_cycle = is_dependency_element(
