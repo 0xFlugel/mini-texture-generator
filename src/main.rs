@@ -11,6 +11,14 @@
 //! A texture is generated based on a consuming [Effect], i.e. one that has no output.
 //! [InputConnector]s without a [Connection] will assume a default value (for consuming effects)
 //! or stop the calculation (for intermediate effects).
+//!
+//! ## Text
+//!
+//! Text scaling has an issue of aliasing when treated like normal mesh-like entities. To get around
+//! that, the text is not created as children to anything. Instead it is moved to the position of a
+//! dummy entity. That way, positioning happens normally, but scaling can be treated differently.
+//! In this case, the globel scaling information is read and the font size is changed accordingly,
+//! generating text that scales and moves as if being a child but without aliasing issues.
 
 mod connection_management;
 mod interaction;
@@ -54,12 +62,12 @@ const SIDEBAR_WIDTH: f32 = 0.2;
 // const FONT_FILENAME: &'static str = "FiraSans-Bold.ttf";
 const FONT_FILENAME: &str = "Roboto-Regular.ttf";
 /// Text size, high enough to have a acceptable render quality.
-const FONT_SIZE: f32 = 15.0;
+const DEFAULT_FONT_SIZE: f32 = 15.0;
 /// The line height of pipeline elements.
 ///
 /// Specifies how much space is used per "line" in the rectangle. This must practically be greater
 /// than 1.0 to accommodate the decorations of text entry boxes.
-const LINE_HEIGHT: f32 = 1.25 * FONT_SIZE;
+const LINE_HEIGHT: f32 = 1.25 * DEFAULT_FONT_SIZE;
 /// Size of the square shape for input and output connectors.
 const IO_PAD_SIZE: f32 = 2. / 3. * LINE_HEIGHT;
 /// The scaling factor for highlighting connector drop off points on hovering.
@@ -134,7 +142,13 @@ fn main() {
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
         .add_system(save_image)
-        .add_system(right_click_deletes_element);
+        .add_system(right_click_deletes_element)
+        .add_system_set_to_stage(
+            CoreStage::PostUpdate,
+            SystemSet::new()
+                .with_system(util::update_text_transform)
+                .after(TransformSystem::TransformPropagate),
+        );
     app.run();
 }
 

@@ -1,8 +1,8 @@
 use crate::{
     delete_connection, Connection, Effect, ElementSize, InputConnector, InputConnectors,
     InteractionBundle, MyInteraction, MyRaycastSet, OutputConnector, OutputConnectors,
-    PipelineElementBundle, TextFieldBundle, TextValue, ValueBinding, FONT_SIZE, IO_PAD_SIZE,
-    LINE_HEIGHT, LOCAL_TO_GPU_BYTE_ORDER, TEXTURE_FORMAT,
+    PipelineElementBundle, TextFieldBundle, TextValue, ValueBinding, DEFAULT_FONT_SIZE,
+    IO_PAD_SIZE, LINE_HEIGHT, LOCAL_TO_GPU_BYTE_ORDER, TEXTURE_FORMAT,
 };
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::prelude::*;
@@ -297,6 +297,7 @@ pub(crate) fn create_pipeline_element(
                 &font,
                 align,
             )
+            .fake
         })
         .collect::<Vec<_>>();
     cmds.entity(element).push_children(&labels);
@@ -397,7 +398,7 @@ pub(crate) fn create_text_field(
         HorizontalAlign::Center,
     );
     cmds.spawn()
-        .add_child(inner_text)
+        .add_child(inner_text.fake)
         .insert_bundle(TextFieldBundle {
             color_mesh_bundle: ColorMesh2dBundle {
                 // z=+0.25 to be in front of the element background (+0) and behind text (+0.5).
@@ -406,7 +407,7 @@ pub(crate) fn create_text_field(
                 mesh: mesh_assets.add(Mesh::from(shape::Quad::new(size))).into(),
                 ..Default::default()
             },
-            value: TextValue::new(value.to_string(), inner_text),
+            value: TextValue::new(value.to_string(), inner_text.real),
             target_value: ValueBinding {
                 entity: param_target.0,
                 parameter_idx: param_target.1,
@@ -416,6 +417,7 @@ pub(crate) fn create_text_field(
         .id()
 }
 
+/// Create a text
 pub(crate) fn create_text(
     cmds: &mut Commands,
     label: &str,
@@ -423,14 +425,14 @@ pub(crate) fn create_text(
     transform: Transform,
     font: &Handle<Font>,
     horizontal: HorizontalAlign,
-) -> Entity {
+) -> FakeText {
     let sections = label
         .lines()
         .map(|line| TextSection {
             value: line.to_string(),
             style: TextStyle {
                 color,
-                font_size: FONT_SIZE,
+                font_size: DEFAULT_FONT_SIZE,
                 font: (*font).clone(),
             },
         })
@@ -438,18 +440,56 @@ pub(crate) fn create_text(
     // Move inner text clearly in front. 0.5 layers to not collide with a full layer in
     // front (if something is placed on that layer) while being bit-exact.
     let text_transform = Transform::from_translation(Vec3::new(0.0, 0.0, 0.5));
-    cmds.spawn_bundle(Text2dBundle {
-        transform: transform * text_transform,
-        text: Text {
-            sections,
-            alignment: TextAlignment {
-                vertical: VerticalAlign::Center,
-                horizontal,
+    let real = cmds
+        .spawn_bundle(Text2dBundle {
+            text: Text {
+                sections,
+                alignment: TextAlignment {
+                    vertical: VerticalAlign::Center,
+                    horizontal,
+                },
             },
-        },
-        ..Default::default()
-    })
-    .id()
+            ..Default::default()
+        })
+        .id();
+    let fake = cmds
+        .spawn_bundle(TransformBundle {
+            local: transform * text_transform,
+            global: GlobalTransform::default(),
+        })
+        .insert(TextDummy { real })
+        .id();
+    FakeText { real, fake }
+}
+
+pub(crate) struct FakeText {
+    real: Entity,
+    fake: Entity,
+}
+
+/// A component for a dummy entity that is used as an anchor for correctly place *and scale* text
+/// without aliasing issues.
+#[derive(Debug, Clone, Component)]
+pub(crate) struct TextDummy {
+    real: Entity,
+}
+
+/// A system to apply transformations to text entities based on the corresponding [TextDummy]
+/// entities.
+pub(crate) fn update_text_transform(
+    dummies: Query<(&GlobalTransform, &TextDummy), Changed<GlobalTransform>>,
+    mut texts: Query<(&mut Transform, &mut GlobalTransform, &mut Text), Without<TextDummy>>,
+) {
+    for (transform, dummy) in dummies.iter() {
+        if let Ok((mut local, mut global, mut text)) = texts.get_mut(dummy.real) {
+            local.translation = transform.translation;
+            global.translation = transform.translation;
+            for section in &mut text.sections {
+                section.style.font_size =
+                    DEFAULT_FONT_SIZE * transform.scale.truncate().min_element();
+            }
+        }
+    }
 }
 
 /// Create an entity showing an image of a given square size.
