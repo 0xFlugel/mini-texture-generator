@@ -1,5 +1,5 @@
 use crate::interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
-use crate::{RootTransform, SidebarElement, HIGHLIGHT_SCALING};
+use crate::{Dirty, RootTransform, SidebarElement, HIGHLIGHT_SCALING};
 use bevy::ecs::query::QueryEntityError;
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
@@ -165,10 +165,13 @@ pub(crate) fn calc_line_end_points(
 /// slightly missing an accepting drop-off point.
 #[allow(clippy::type_complexity)]
 pub(crate) fn highlight_connection_acceptor(
-    inputs: Query<&Parent, With<InputConnector>>,
-    outputs: Query<&Parent, With<OutputConnector>>,
+    input_parents: Query<&Parent, With<InputConnector>>,
+    output_parents: Query<&Parent, With<OutputConnector>>,
     mut floating_connectors: Query<&mut FloatingConnector>,
     connections: Query<&Connection>,
+    effect_input_connectors: Query<&InputConnectors>,
+    input_connector_connections: Query<&InputConnector>,
+    connector_parents: Query<&Parent, Or<(With<InputConnector>, With<OutputConnector>)>>,
     mut transforms: Query<(&mut Transform, &GlobalTransform)>,
     interaction_changed: Query<
         (Entity, &MyInteraction),
@@ -179,31 +182,96 @@ pub(crate) fn highlight_connection_acceptor(
     >,
     mut highlighted: Local<HashMap<Entity, Transform>>,
 ) {
-    //TODO Make the function more readable.
-    //TODO Exlude same-type-connectors (input-input, out-out).
+    /// Check whether the `candidate` effect is contained in the dependency tree of the `origin`
+    /// effect.
+    fn is_dependency_element(
+        origin: Entity,
+        candidate: Entity,
+        connections: &Query<&Connection>,
+        effect_input_connectors: &Query<&InputConnectors>,
+        input_connector_connections: &Query<&InputConnector>,
+        connector_parents: &Query<&Parent, Or<(With<InputConnector>, With<OutputConnector>)>>,
+    ) -> bool {
+        let direct_dependencies = effect_input_connectors
+            .get(origin)
+            .unwrap()
+            .0
+            .iter()
+            // Resolve input connector to opposite output connector.
+            .filter_map(|input| {
+                input_connector_connections
+                    .get(*input)
+                    .unwrap()
+                    .0
+                    .map(|connection| {
+                        connections
+                            .get(connection)
+                            .unwrap()
+                            .output_connector
+                            .entity()
+                    })
+            })
+            // Silently skip potential floating connectors.
+            .filter_map(|output_connector| connector_parents.get(output_connector).ok())
+            // Resolve to effect.
+            .map(|parent| parent.0)
+            .collect::<Vec<_>>();
+        direct_dependencies.contains(&candidate)
+            || direct_dependencies.into_iter().any(|origin| {
+                is_dependency_element(
+                    origin,
+                    candidate,
+                    connections,
+                    effect_input_connectors,
+                    input_connector_connections,
+                    connector_parents,
+                )
+            })
+    }
 
     // Update drop_on field.
     // Depends on the `highlighted` data from the last update.
     if let Some(mut f) = floating_connectors.iter_mut().next() {
         for (connector, interaction) in interaction_changed.iter() {
-            if let Ok(hover_parent) = inputs.get(connector).or_else(|_| outputs.get(connector)) {
-                // Only consider IO connectors for the open connection end.
-                let is_other_element = match connections.get(f.connection) {
-                    Ok(Connection {
+            // Inputs must lead to outputs and outputs must lead to inputs. There cannot be
+            // output-output or input-input connections. Only consider IO connectors (of the other
+            // type) for the open connection end.
+            let parents = if let Ok(hover_parent) = input_parents.get(connector) {
+                let fixed_parent = match connections.get(f.connection).unwrap() {
+                    Connection {
                         input_connector: ConnectionAttachment::Floating(_),
-                        output_connector: ConnectionAttachment::Connector(other_end),
-                    }) => outputs
-                        .get(*other_end)
-                        .map_or(true, |parent| parent != hover_parent),
-                    Ok(Connection {
-                        input_connector: ConnectionAttachment::Connector(other_end),
-                        output_connector: ConnectionAttachment::Floating(_),
-                    }) => inputs
-                        .get(*other_end)
-                        .map_or(true, |parent| parent != hover_parent),
-                    _ => false,
+                        output_connector: ConnectionAttachment::Connector(fixed_end),
+                    } => output_parents.get(*fixed_end).ok(),
+                    // A dragged connection has exactly one floating connector.
+                    _ => None,
                 };
-                if is_other_element {
+                fixed_parent.map(|f| (hover_parent, f))
+            } else if let Ok(hover_parent) = output_parents.get(connector) {
+                // Only consider IO connectors (of the other type) for the open connection end.
+                let fixed_parent = match connections.get(f.connection).unwrap() {
+                    Connection {
+                        input_connector: ConnectionAttachment::Connector(fixed_end),
+                        output_connector: ConnectionAttachment::Floating(_),
+                    } => input_parents.get(*fixed_end).ok(),
+                    // A dragged connection has exactly one floating connector.
+                    _ => None,
+                };
+                fixed_parent.map(|f| (hover_parent, f))
+            } else {
+                None
+            };
+            if let Some((hover_parent, fixed_parent)) = parents {
+                let is_other_element = fixed_parent != hover_parent;
+                // Forbid cycles, as they would create infinite loops in [crate::update_texture].
+                let would_create_cycle = is_dependency_element(
+                    fixed_parent.0,
+                    hover_parent.0,
+                    &connections,
+                    &effect_input_connectors,
+                    &input_connector_connections,
+                    &connector_parents,
+                );
+                if is_other_element && !would_create_cycle {
                     match *interaction {
                         MyInteraction::Hover => {
                             f.drop_on = Some(connector);
@@ -240,6 +308,7 @@ pub(crate) fn finish_connection(
     mut connections: Query<&mut Connection>,
     mut inputs: Query<&mut InputConnector>,
     mut outputs: Query<&mut OutputConnector>,
+    parents: Query<&Parent>,
 ) {
     for (
         floating_connector,
@@ -251,7 +320,7 @@ pub(crate) fn finish_connection(
     {
         match drop_on {
             #[rustfmt::skip]
-            None => delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs),
+            None => delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs, &parents),
             Some(drop_connector) => {
                 if let Ok(Connection {
                     input_connector,
@@ -260,9 +329,14 @@ pub(crate) fn finish_connection(
                 {
                     match (input_connector, output_connector) {
                         // Was dropped on output connector.
-                        (ConnectionAttachment::Connector(_), ConnectionAttachment::Floating(_)) => {
+                        (
+                            ConnectionAttachment::Connector(input_connector),
+                            ConnectionAttachment::Floating(_),
+                        ) => {
+                            cmds.entity(parents.get(*input_connector).unwrap().0)
+                                .insert(Dirty);
                             #[rustfmt::skip]
-                                outputs.get_mut(*drop_connector).unwrap().0.push(*connection);
+                            outputs.get_mut(*drop_connector).unwrap().0.push(*connection);
                             connections.get_mut(*connection).unwrap().output_connector =
                                 ConnectionAttachment::Connector(*drop_connector);
                         }
@@ -270,17 +344,19 @@ pub(crate) fn finish_connection(
                         (ConnectionAttachment::Floating(_), ConnectionAttachment::Connector(_)) => {
                             if let Some(previous) = inputs.get(*drop_connector).unwrap().0 {
                                 #[rustfmt::skip]
-                                    delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs);
+                                delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs, &parents);
                             }
                             inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
                             connections.get_mut(*connection).unwrap().input_connector =
                                 ConnectionAttachment::Connector(*drop_connector);
+                            cmds.entity(parents.get(*drop_connector).unwrap().0)
+                                .insert(Dirty);
                         }
                         // Illegal states.
                         _ => {
                             eprintln!("Deleted a connection with illegal state.");
                             #[rustfmt::skip]
-                                delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs);
+                            delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs, &parents);
                         }
                     }
                 } else {
@@ -300,6 +376,7 @@ pub(crate) fn delete_connection<'a>(
     connections: &Query<&mut Connection>,
     inputs: &mut Query<&mut InputConnector>,
     outputs: &mut Query<&mut OutputConnector>,
+    parents: &Query<&Parent>,
 ) {
     fn inner<'a>(
         connection: Entity,
@@ -307,6 +384,7 @@ pub(crate) fn delete_connection<'a>(
         connections: &Query<&mut Connection>,
         inputs: &mut Query<&mut InputConnector>,
         outputs: &mut Query<&mut OutputConnector>,
+        parents: &Query<&Parent>,
     ) -> Result<(), QueryEntityError> {
         let Connection {
             input_connector,
@@ -314,7 +392,13 @@ pub(crate) fn delete_connection<'a>(
         } = connections.get(connection)?;
         match input_connector {
             ConnectionAttachment::Floating(connector) => cmds.entity(*connector).despawn(),
-            ConnectionAttachment::Connector(connector) => inputs.get_mut(*connector)?.0 = None,
+            ConnectionAttachment::Connector(connector) => {
+                let mut input_connector = inputs.get_mut(*connector)?;
+                if let Ok(dependent) = parents.get(*connector) {
+                    cmds.entity(dependent.0).insert(Dirty);
+                }
+                input_connector.0 = None;
+            }
         }
         match output_connector {
             ConnectionAttachment::Floating(connector) => cmds.entity(*connector).despawn(),
@@ -331,7 +415,7 @@ pub(crate) fn delete_connection<'a>(
         cmds.entity(connection).despawn();
         Ok(())
     }
-    if inner(connection, cmds, connections, inputs, outputs).is_err() {
+    if inner(connection, cmds, connections, inputs, outputs, parents).is_err() {
         eprintln!("Failed to look up some entity while deleting an orphaned connection.");
     }
 }

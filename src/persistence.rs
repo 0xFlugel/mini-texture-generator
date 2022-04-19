@@ -3,8 +3,8 @@ use crate::connection_management::{
 };
 use crate::{
     create_pipeline_element, gen_colors, Args, Connection, Draggable, Effect, ElementSize,
-    InputConnector, InputConnectors, MetaEvent, MyMeshes, OutputConnector, OutputConnectors,
-    RootTransform, SidebarElement,
+    InputConnector, InputConnectors, MetaEvent, MyInteraction, MyMeshes, OutputConnector,
+    OutputConnectors, RootTransform, SidebarElement,
 };
 use bevy::prelude::*;
 use bevy::sprite::Mesh2dHandle;
@@ -83,7 +83,7 @@ pub(crate) fn load_from_file(
                             );
                             cmds.entity(element)
                                 .insert(Draggable)
-                                .insert(Interaction::None);
+                                .insert(MyInteraction::None);
 
                             // Enable root transformations.
                             cmds.entity(root_entity).add_child(element);
@@ -122,10 +122,17 @@ fn set_parameters(effect: &mut Effect, parameters: &Vec<f32>) {
                 *y = *p;
             }
         }
-        Effect::Rgba { .. }
-        | Effect::Hsva { .. }
-        | Effect::Gray { .. }
-        | Effect::LinearX
+        Effect::Rgba { resolution, .. }
+        | Effect::Hsva { resolution, .. }
+        | Effect::Gray { resolution, .. } => {
+            if let Some(p) = parameters.get(0) {
+                resolution.width = *p as u32;
+            }
+            if let Some(p) = parameters.get(1) {
+                resolution.height = *p as u32;
+            }
+        }
+        Effect::LinearX
         | Effect::Add
         | Effect::Sub
         | Effect::Mul
@@ -242,7 +249,7 @@ pub(crate) fn save_to_file(
         type OutputConnectorIndex = ConnectorIndex;
         type InputConnectorIndex = ConnectorIndex;
 
-        // Pre-built an index maps so that we do not need to resolve many times or work on partially
+        // Pre-build index maps so that we do not need to resolve many times or work on partially
         // available data when building the ElementState.
         let entity_indices = HashMap::<Entity, ArrayIndex>::from_iter(
             elements.iter().enumerate().map(|(i, (e, ..))| (e, i)),
@@ -285,10 +292,12 @@ pub(crate) fn save_to_file(
                 Effect::SimplexNoise { seed, .. } => vec![*seed as f32],
                 Effect::Rotate { degrees: p1 } | Effect::Constant { value: p1 } => vec![*p1],
                 Effect::Offset { x, y } | Effect::Scale { x, y } => vec![*x, *y],
-                Effect::Rgba { .. }
-                | Effect::Hsva { .. }
-                | Effect::Gray { .. }
-                | Effect::LinearX
+                Effect::Rgba { resolution, .. }
+                | Effect::Hsva { resolution, .. }
+                | Effect::Gray { resolution, .. } => {
+                    vec![resolution.width as f32, resolution.height as f32]
+                }
+                Effect::LinearX
                 | Effect::Add
                 | Effect::Sub
                 | Effect::Mul

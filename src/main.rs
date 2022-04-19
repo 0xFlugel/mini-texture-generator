@@ -20,7 +20,7 @@ mod persistence;
 mod text_entry;
 mod util;
 
-use crate::connection_management::{delete_connection, Connection};
+use crate::connection_management::{delete_connection, Connection, ConnectionAttachment};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::math::SimplexSampler;
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
@@ -67,9 +67,12 @@ const IO_PAD_SIZE: f32 = 2. / 3. * LINE_HEIGHT;
 const HIGHLIGHT_SCALING: f32 = 1.5;
 
 /// Number of pixels in each direction of the 2D texture.
-const TEXTURE_SIZE: u32 = 16;
+const DEFAULT_TEXTURE_SIZE: Size<u32> = Size {
+    width: 16,
+    height: 16,
+};
 /// A multiplier to the OS scroll distance for vertical scrolling.
-const SCROLL_MULTIPLIER: f32 = 2.0;
+const SCROLL_MULTIPLIER: f32 = -3.0;
 //// A multiplier for stepping through scale factors in the main view.
 const SCALE_FACTOR: f32 = 1.2;
 
@@ -130,6 +133,7 @@ fn main() {
         )
         .add_system(connection_management::highlight_connection_acceptor)
         .add_system(connection_management::finish_connection)
+        .add_system(bubble_up_dirty)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
         .add_system(save_image)
@@ -154,7 +158,7 @@ enum MetaEvent {
 
 /// Save generated images with a click to a new file with a random name.
 fn save_image(
-    images: Query<(&MyInteraction, &Handle<ColorMaterial>), Changed<MyInteraction>>,
+    images: Query<(&MyInteraction, &Handle<ColorMaterial>, &Effect), Changed<MyInteraction>>,
     material_assets: Res<Assets<ColorMaterial>>,
     image_assets: Res<Assets<Image>>,
 ) {
@@ -195,21 +199,18 @@ fn save_image(
         .filter(|p| !p.exists());
     let images = images
         .iter()
-        .filter(|(act, _)| act == &&MyInteraction::PressedLeft)
-        .filter_map(|(_, material)| {
+        .filter(|(act, _, _)| act == &&MyInteraction::PressedLeft)
+        .filter_map(|(_, material, effect)| {
             material_assets
                 .get(material)
                 .and_then(|mat| mat.texture.as_ref())
                 .and_then(|img_handle| image_assets.get(img_handle.clone()))
+                .and_then(|img| effect.size().map(|size| (img, size)))
         });
-    for (img, path) in images.zip(paths) {
+    for ((img, size), path) in images.zip(paths) {
         match File::create(path.as_path()) {
             Ok(file) => {
-                if let Err(e) = write_ppm_image(
-                    &mut BufWriter::new(file),
-                    &img.data,
-                    Size::new(TEXTURE_SIZE, TEXTURE_SIZE),
-                ) {
+                if let Err(e) = write_ppm_image(&mut BufWriter::new(file), &img.data, size) {
                     eprintln!(
                         "Failed to export image to file \"{}\": {}",
                         path.display(),
@@ -230,6 +231,7 @@ fn right_click_deletes_element(
     mut inputs: Query<&mut InputConnector>,
     mut outputs: Query<&mut OutputConnector>,
     io_pads: Query<(&OutputConnectors, &InputConnectors)>,
+    parents: Query<&Parent>,
 ) {
     for (entity, interaction) in to_delete.iter() {
         if interaction == &MyInteraction::PressedRight {
@@ -240,6 +242,7 @@ fn right_click_deletes_element(
                 &mut inputs,
                 &mut outputs,
                 &io_pads,
+                &parents,
             );
         }
     }
@@ -256,6 +259,7 @@ fn delete_pipeline_element(
     inputs: &mut Query<&mut InputConnector>,
     outputs: &mut Query<&mut OutputConnector>,
     io_pads: &Query<(&OutputConnectors, &InputConnectors)>,
+    parents: &Query<&Parent>,
 ) {
     if let Ok((o, i)) = io_pads.get(entity) {
         // Clean up connections to other entities.
@@ -268,7 +272,7 @@ fn delete_pipeline_element(
                 .copied()
                 .collect::<Vec<_>>();
         for connection in to_delete {
-            delete_connection(connection, cmds, connections, inputs, outputs);
+            delete_connection(connection, cmds, connections, inputs, outputs, parents);
         }
 
         // Finally delete this element.
@@ -276,9 +280,49 @@ fn delete_pipeline_element(
     }
 }
 
+/// A dirty flag to be set on all texure displays (RGBA, HSVA, GRAY) when a dependency is changed in
+/// any way.
+#[derive(Component)]
+struct Dirty;
+
+/// Move the dirty flag from an effect to all end displays.
+fn bubble_up_dirty(
+    mut cmds: Commands,
+    dirty: Query<(Entity, &Effect, &OutputConnectors), With<Dirty>>,
+    output_connectors: Query<&OutputConnector>,
+    connections: Query<&Connection>,
+    parents: Query<&Parent>,
+) {
+    let mut remove = vec![];
+    for (entity, effect, outputs) in dirty.iter() {
+        if effect.size().is_none() {
+            remove.push(entity);
+            let dependents = outputs
+                .0
+                .iter()
+                .flat_map(|e| &output_connectors.get(*e).unwrap().0)
+                .filter_map(|c| match connections.get(*c).unwrap().input_connector {
+                    ConnectionAttachment::Connector(e) => parents.get(e).ok(),
+                    _ => None,
+                });
+            for Parent(entity) in dependents {
+                cmds.entity(*entity).insert(Dirty);
+            }
+        }
+    }
+    for entity in remove {
+        cmds.entity(entity).remove::<Dirty>();
+    }
+}
+
 /// React to changes in connections and update the pipeline (i.e. texture generation function)
 /// accordingly.
 fn update_texture(
+    mut cmds: Commands,
+    dirty_effects: Query<
+        (Entity, &Effect, &InputConnectors),
+        (Without<SidebarElement>, With<Dirty>),
+    >,
     effects: Query<(&Effect, &InputConnectors), Without<SidebarElement>>,
     connections: Query<&Connection>,
     input_connectors: Query<&InputConnector>,
@@ -287,8 +331,8 @@ fn update_texture(
 ) {
     const ELEM_SIZE: usize = size_of::<PixelData>();
 
-    fn write_pixel(img: &mut Image, at: XY<u32>, pixel: Color) {
-        let offset = (at.y * TEXTURE_SIZE + at.x) as usize * ELEM_SIZE;
+    fn write_pixel(img: &mut Image, at: XY<u32>, pixel: Color, width: u32) {
+        let offset = (at.y * width + at.x) as usize * ELEM_SIZE;
         let pixel = pixel
             .as_rgba_f32()
             .into_iter()
@@ -348,7 +392,7 @@ fn update_texture(
                 unreachable!()
             }
             Effect::Constant { value } => Some(*value),
-            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
+            Effect::LinearX => Some(at.x as f32 / DEFAULT_TEXTURE_SIZE.width as f32 + 0.5),
             Effect::Rotate { .. }
             | Effect::Offset { .. }
             | Effect::Scale { .. }
@@ -358,7 +402,9 @@ fn update_texture(
             Effect::Sub => binary_op(&|a, b| a - b),
             Effect::Mul => binary_op(&|a, b| a * b),
             Effect::Div => binary_op(&|a, b| a / b),
-            Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
+            Effect::SineX => {
+                Some(0.5 * (at.x / DEFAULT_TEXTURE_SIZE.width as f32 * (2.0 * PI)).sin() + 0.5)
+            }
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::SimplexNoise { cache, seed: _, .. } => Some(
                 cache
@@ -406,25 +452,40 @@ fn update_texture(
         }
     }
 
-    for (effect, inputs) in effects.iter() {
-        let image = match effect {
-            Effect::Rgba { target: Some(h) }
-            | Effect::Hsva { target: Some(h) }
-            | Effect::Gray { target: Some(h) } => image_assets.get_mut(h),
-            Effect::Rgba { target: None }
-            | Effect::Hsva { target: None }
-            | Effect::Gray { target: None } => {
+    for (entity, effect, inputs) in dirty_effects.iter() {
+        cmds.entity(entity).remove::<Dirty>();
+        let image_size = match effect {
+            Effect::Rgba {
+                target: Some(h),
+                resolution,
+                ..
+            }
+            | Effect::Hsva {
+                target: Some(h),
+                resolution,
+                ..
+            }
+            | Effect::Gray {
+                target: Some(h),
+                resolution,
+                ..
+            } => image_assets.get_mut(h).map(|img| (img, resolution)),
+            Effect::Rgba { target: None, .. }
+            | Effect::Hsva { target: None, .. }
+            | Effect::Gray { target: None, .. } => {
                 eprintln!("Consumer does not have a display.");
                 None
             }
             _ => None,
         };
-        if let Some(image) = image {
-            let origin = Vec2::splat(TEXTURE_SIZE as f32 / 2.0);
-            let index_to_pixel_center_offset = Vec2::splat(0.5);
-            for x in 0..TEXTURE_SIZE {
-                for y in 0..TEXTURE_SIZE {
-                    let at = Vec2::new(x as f32, y as f32) - origin + index_to_pixel_center_offset;
+        if let Some((image, size)) = image_size {
+            let center = Vec2::new(size.width as f32, size.height as f32) / 2.0;
+            let subpixel_offset = Vec2::splat(0.5);
+            for x in 0..size.width {
+                for y in 0..size.height {
+                    let at = (Vec2::new(x as f32, y as f32) - center + subpixel_offset)
+                        // Normalize coords (-1..=1).
+                        / Vec2::new(size.width as f32, size.height as f32);
                     let inputs = inputs
                         .0
                         .iter()
@@ -461,7 +522,7 @@ fn update_texture(
                         ),
                         _ => unreachable!(),
                     };
-                    write_pixel(image, XY { x, y }, color);
+                    write_pixel(image, XY { x, y }, color, size.width);
                 }
             }
         }
@@ -785,12 +846,8 @@ fn create_pipeline_element(
     }
 
     // Create the texture display above the consuming pipeline elements.
-    let add_texture_display = !template
-        && matches!(
-            effect,
-            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. }
-        );
-    let (effect, texture) = if add_texture_display {
+    let resolution = effect.size().filter(|_| !template);
+    let (effect, texture) = if let Some(resolution) = resolution {
         let size = element_size.0.width;
         let transform = Transform::from_translation(Vec3::new(
             0.0,
@@ -800,19 +857,29 @@ fn create_pipeline_element(
             // program.
             0.9,
         ));
-        let (texture, image_handle) =
-            create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
+        let (texture, image_handle) = create_image_entity(
+            cmds,
+            mesh_assets,
+            materials,
+            image_assets,
+            size,
+            transform,
+            resolution,
+        );
         cmds.entity(texture)
             .insert_bundle(InteractionBundle::default());
         let linked = match effect {
-            Effect::Rgba { .. } => Effect::Rgba {
+            Effect::Rgba { resolution, .. } => Effect::Rgba {
                 target: Some(image_handle),
+                resolution: *resolution,
             },
-            Effect::Hsva { .. } => Effect::Hsva {
+            Effect::Hsva { resolution, .. } => Effect::Hsva {
                 target: Some(image_handle),
+                resolution: *resolution,
             },
-            Effect::Gray { .. } => Effect::Gray {
+            Effect::Gray { resolution, .. } => Effect::Gray {
                 target: Some(image_handle),
+                resolution: *resolution,
             },
             Effect::Constant { .. }
             | Effect::LinearX
@@ -1052,16 +1119,17 @@ fn create_image_entity(
     image_assets: &mut Assets<Image>,
     size: f32,
     transform: Transform,
+    resolution: Size<u32>,
 ) -> (Entity, Handle<Image>) {
     let handle = image_assets.add(Image::new(
         Extent3d {
-            width: TEXTURE_SIZE,
-            height: TEXTURE_SIZE,
+            width: resolution.width,
+            height: resolution.height,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
         std::iter::repeat(Color::GRAY.as_rgba_f32())
-            .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
+            .take(resolution.width as usize * resolution.height as usize)
             .flatten()
             .flat_map(LOCAL_TO_GPU_BYTE_ORDER)
             .collect(),
@@ -1090,18 +1158,21 @@ enum Effect {
     /// The sidebar (i.e. template) elements do not have a texture.
     Rgba {
         target: Option<Handle<Image>>,
+        resolution: Size<u32>,
     },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
     Hsva {
         target: Option<Handle<Image>>,
+        resolution: Size<u32>,
     },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
     Gray {
         target: Option<Handle<Image>>,
+        resolution: Size<u32>,
     },
     /// Holds the constant value that is used for all sampled coordinates.
     Constant {
@@ -1148,14 +1219,17 @@ enum Effect {
 impl Clone for Effect {
     fn clone(&self) -> Self {
         match self {
-            Effect::Rgba { target } => Effect::Rgba {
+            Effect::Rgba { target, resolution } => Effect::Rgba {
                 target: (*target).clone(),
+                resolution: *resolution,
             },
-            Effect::Hsva { target } => Effect::Hsva {
+            Effect::Hsva { target, resolution } => Effect::Hsva {
                 target: (*target).clone(),
+                resolution: *resolution,
             },
-            Effect::Gray { target } => Effect::Gray {
+            Effect::Gray { target, resolution } => Effect::Gray {
                 target: (*target).clone(),
+                resolution: *resolution,
             },
             Effect::Constant { value } => Effect::Constant { value: *value },
             Effect::LinearX => Effect::LinearX,
@@ -1195,9 +1269,18 @@ impl Effect {
     /// A list of all variants.
     fn all() -> Vec<Self> {
         vec![
-            Self::Rgba { target: None },
-            Self::Hsva { target: None },
-            Self::Gray { target: None },
+            Self::Rgba {
+                target: None,
+                resolution: DEFAULT_TEXTURE_SIZE,
+            },
+            Self::Hsva {
+                target: None,
+                resolution: DEFAULT_TEXTURE_SIZE,
+            },
+            Self::Gray {
+                target: None,
+                resolution: DEFAULT_TEXTURE_SIZE,
+            },
             Self::Constant { value: 1.0 },
             Self::LinearX,
             Self::Rotate { degrees: 1.0 },
@@ -1290,10 +1373,8 @@ impl Effect {
     /// The names of internal parameters of each variant.
     fn controls(&self) -> &'static [&'static str] {
         match self {
-            Effect::Rgba { .. }
-            | Effect::Hsva { .. }
-            | Effect::Gray { .. }
-            | Effect::LinearX
+            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => &["Width", "Height"],
+            Effect::LinearX
             | Effect::Add
             | Effect::Sub
             | Effect::Mul
@@ -1334,6 +1415,17 @@ impl Effect {
 
     fn parameter(&self, idx: usize) -> f32 {
         match self {
+            Effect::Rgba { resolution, .. }
+            | Effect::Hsva { resolution, .. }
+            | Effect::Gray { resolution, .. }
+                if idx < 2 =>
+            {
+                if idx == 0 {
+                    resolution.width as f32
+                } else {
+                    resolution.height as f32
+                }
+            }
             Effect::Constant { value: p } | Effect::Rotate { degrees: p } if idx == 0 => *p,
             Effect::Offset { x, y } | Effect::Scale { x, y } if idx < 2 => {
                 if idx == 0 {
@@ -1362,6 +1454,28 @@ impl Effect {
             | Effect::Polar2CartesianCoords => {
                 panic!("Parameter does not exist.")
             }
+        }
+    }
+
+    fn size(&self) -> Option<Size<u32>> {
+        match self {
+            Effect::Rgba { resolution, .. }
+            | Effect::Hsva { resolution, .. }
+            | Effect::Gray { resolution, .. } => Some(*resolution),
+            Effect::Constant { .. }
+            | Effect::LinearX
+            | Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX
+            | Effect::SimplexNoise { .. }
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => None,
         }
     }
 }
