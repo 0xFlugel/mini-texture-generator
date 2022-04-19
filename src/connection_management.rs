@@ -1,5 +1,5 @@
 use crate::interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
-use crate::{RootTransform, SidebarElement, HIGHLIGHT_SCALING};
+use crate::{Dirty, RootTransform, SidebarElement, HIGHLIGHT_SCALING};
 use bevy::ecs::query::QueryEntityError;
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
@@ -308,6 +308,7 @@ pub(crate) fn finish_connection(
     mut connections: Query<&mut Connection>,
     mut inputs: Query<&mut InputConnector>,
     mut outputs: Query<&mut OutputConnector>,
+    parents: Query<&Parent>,
 ) {
     for (
         floating_connector,
@@ -319,7 +320,7 @@ pub(crate) fn finish_connection(
     {
         match drop_on {
             #[rustfmt::skip]
-            None => delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs),
+            None => delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs, &parents),
             Some(drop_connector) => {
                 if let Ok(Connection {
                     input_connector,
@@ -328,7 +329,12 @@ pub(crate) fn finish_connection(
                 {
                     match (input_connector, output_connector) {
                         // Was dropped on output connector.
-                        (ConnectionAttachment::Connector(_), ConnectionAttachment::Floating(_)) => {
+                        (
+                            ConnectionAttachment::Connector(input_connector),
+                            ConnectionAttachment::Floating(_),
+                        ) => {
+                            cmds.entity(parents.get(*input_connector).unwrap().0)
+                                .insert(Dirty);
                             #[rustfmt::skip]
                             outputs.get_mut(*drop_connector).unwrap().0.push(*connection);
                             connections.get_mut(*connection).unwrap().output_connector =
@@ -338,17 +344,19 @@ pub(crate) fn finish_connection(
                         (ConnectionAttachment::Floating(_), ConnectionAttachment::Connector(_)) => {
                             if let Some(previous) = inputs.get(*drop_connector).unwrap().0 {
                                 #[rustfmt::skip]
-                                delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs);
+                                delete_connection(previous, &mut cmds, &connections, &mut inputs, &mut outputs, &parents);
                             }
                             inputs.get_mut(*drop_connector).unwrap().0 = Some(*connection);
                             connections.get_mut(*connection).unwrap().input_connector =
                                 ConnectionAttachment::Connector(*drop_connector);
+                            cmds.entity(parents.get(*drop_connector).unwrap().0)
+                                .insert(Dirty);
                         }
                         // Illegal states.
                         _ => {
                             eprintln!("Deleted a connection with illegal state.");
                             #[rustfmt::skip]
-                            delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs);
+                            delete_connection(*connection, &mut cmds, &connections, &mut inputs, &mut outputs, &parents);
                         }
                     }
                 } else {
@@ -368,6 +376,7 @@ pub(crate) fn delete_connection<'a>(
     connections: &Query<&mut Connection>,
     inputs: &mut Query<&mut InputConnector>,
     outputs: &mut Query<&mut OutputConnector>,
+    parents: &Query<&Parent>,
 ) {
     fn inner<'a>(
         connection: Entity,
@@ -375,6 +384,7 @@ pub(crate) fn delete_connection<'a>(
         connections: &Query<&mut Connection>,
         inputs: &mut Query<&mut InputConnector>,
         outputs: &mut Query<&mut OutputConnector>,
+        parents: &Query<&Parent>,
     ) -> Result<(), QueryEntityError> {
         let Connection {
             input_connector,
@@ -382,7 +392,13 @@ pub(crate) fn delete_connection<'a>(
         } = connections.get(connection)?;
         match input_connector {
             ConnectionAttachment::Floating(connector) => cmds.entity(*connector).despawn(),
-            ConnectionAttachment::Connector(connector) => inputs.get_mut(*connector)?.0 = None,
+            ConnectionAttachment::Connector(connector) => {
+                let mut input_connector = inputs.get_mut(*connector)?;
+                if let Ok(dependent) = parents.get(*connector) {
+                    cmds.entity(dependent.0).insert(Dirty);
+                }
+                input_connector.0 = None;
+            }
         }
         match output_connector {
             ConnectionAttachment::Floating(connector) => cmds.entity(*connector).despawn(),
@@ -399,7 +415,7 @@ pub(crate) fn delete_connection<'a>(
         cmds.entity(connection).despawn();
         Ok(())
     }
-    if inner(connection, cmds, connections, inputs, outputs).is_err() {
+    if inner(connection, cmds, connections, inputs, outputs, parents).is_err() {
         eprintln!("Failed to look up some entity while deleting an orphaned connection.");
     }
 }

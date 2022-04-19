@@ -231,6 +231,7 @@ fn right_click_deletes_element(
     mut inputs: Query<&mut InputConnector>,
     mut outputs: Query<&mut OutputConnector>,
     io_pads: Query<(&OutputConnectors, &InputConnectors)>,
+    parents: Query<&Parent>,
 ) {
     for (entity, interaction) in to_delete.iter() {
         if interaction == &MyInteraction::PressedRight {
@@ -241,6 +242,7 @@ fn right_click_deletes_element(
                 &mut inputs,
                 &mut outputs,
                 &io_pads,
+                &parents,
             );
         }
     }
@@ -257,6 +259,7 @@ fn delete_pipeline_element(
     inputs: &mut Query<&mut InputConnector>,
     outputs: &mut Query<&mut OutputConnector>,
     io_pads: &Query<(&OutputConnectors, &InputConnectors)>,
+    parents: &Query<&Parent>,
 ) {
     if let Ok((o, i)) = io_pads.get(entity) {
         // Clean up connections to other entities.
@@ -269,7 +272,7 @@ fn delete_pipeline_element(
                 .copied()
                 .collect::<Vec<_>>();
         for connection in to_delete {
-            delete_connection(connection, cmds, connections, inputs, outputs);
+            delete_connection(connection, cmds, connections, inputs, outputs, parents);
         }
 
         // Finally delete this element.
