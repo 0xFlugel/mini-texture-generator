@@ -69,7 +69,7 @@ const HIGHLIGHT_SCALING: f32 = 1.5;
 /// Number of pixels in each direction of the 2D texture.
 const TEXTURE_SIZE: u32 = 16;
 /// A multiplier to the OS scroll distance for vertical scrolling.
-const SCROLL_MULTIPLIER: f32 = 2.0;
+const SCROLL_MULTIPLIER: f32 = -3.0;
 //// A multiplier for stepping through scale factors in the main view.
 const SCALE_FACTOR: f32 = 1.2;
 
