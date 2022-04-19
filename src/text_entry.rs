@@ -16,7 +16,7 @@ impl Plugin for TextEntryPlugin {
             .add_system(TextEntryPlugin::value_scrolling)
             .add_system(TextEntryPlugin::reparse_changed_text)
             .add_system(TextEntryPlugin::text_display)
-            .add_system(TextEntryPlugin::update_bound_parameter)
+            .add_system(TextEntryPlugin::update_bound_parameter.label(TextEntry::UpdateBinding))
             .insert_resource(Focus::default());
     }
 }
@@ -258,6 +258,13 @@ impl TextEntryPlugin {
             }
         }
     }
+}
+
+/// Labels for the [TextEntryPlugin].
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
+pub(crate) enum TextEntry {
+    /// When parameters of [crate::Effect]s are updated based on changed [TextValue] values.
+    UpdateBinding,
 }
 
 /// Increment or decrement (based on `increment` flag) a decimal number in form of a list of

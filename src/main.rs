@@ -30,7 +30,7 @@ mod util;
 use crate::connection_management::{delete_connection, Connection, ConnectionAttachment};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::math::SimplexSampler;
-use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
+use crate::text_entry::{TextEntry, TextEntryPlugin, TextValue, ValueBinding};
 use crate::util::{create_pipeline_element, delete_pipeline_element, gen_colors, TextFixPlugin};
 use bevy::core::FixedTimestep;
 use bevy::ecs::event::Events;
@@ -140,7 +140,7 @@ fn main() {
         .add_system(connection_management::highlight_connection_acceptor)
         .add_system(connection_management::finish_connection)
         .add_system(bubble_up_dirty)
-        .add_system(update_texture)
+        .add_system(update_texture.after(TextEntry::UpdateBinding))
         .add_system(util::image_modified_detection)
         .add_system(save_image)
         .add_system(right_click_deletes_element);
