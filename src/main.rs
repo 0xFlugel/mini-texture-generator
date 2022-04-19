@@ -87,8 +87,6 @@ const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
 const LOCAL_TO_GPU_BYTE_ORDER: &dyn Fn(f32) -> [u8; 4] = &f32::to_le_bytes;
 const GPU_TO_LOCAL_BYTE_ORDER: &dyn Fn([u8; 4]) -> f32 = &f32::from_le_bytes;
 
-//TODO Turn inserting multiple components on new entities into bundels for better readability.
-
 #[derive(Debug, Clone, Parser)]
 struct Args {
     /// The file to load from.
