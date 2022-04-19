@@ -1,10 +1,10 @@
 use crate::connection_management::{
     calc_line_end_points, gen_line, ConnectionAttachment, ConnectionBundle,
 };
+use crate::util::{create_pipeline_element, gen_colors};
 use crate::{
-    create_pipeline_element, gen_colors, Args, Connection, Draggable, Effect, ElementSize,
-    InputConnector, InputConnectors, MetaEvent, MyInteraction, MyMeshes, OutputConnector,
-    OutputConnectors, RootTransform, SidebarElement,
+    Args, Connection, Draggable, Effect, ElementSize, InputConnector, InputConnectors, MetaEvent,
+    MyInteraction, MyMeshes, OutputConnector, OutputConnectors, RootTransform, SidebarElement,
 };
 use bevy::prelude::*;
 use bevy::sprite::Mesh2dHandle;
