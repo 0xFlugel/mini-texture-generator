@@ -514,7 +514,6 @@ fn create_element(
         &GlobalTransform,
         &Mesh2dHandle,
         &Handle<ColorMaterial>,
-        &Children,
         &ElementSize,
     )>,
     mouse_position: Res<MousePosition>,
@@ -524,7 +523,6 @@ fn create_element(
     mut mesh_assets: ResMut<Assets<Mesh>>,
     meshes: Res<HashMap<MyMeshes, Mesh2dHandle>>,
     font: Res<Handle<Font>>,
-    texts: Query<&Text>,
     root: Query<(Entity, &Transform), With<RootTransform>>,
 ) {
     /// Copy the relevent components directly from the existing template and create a pipeline
@@ -536,7 +534,6 @@ fn create_element(
             &GlobalTransform,
             &Mesh2dHandle,
             &Handle<ColorMaterial>,
-            &Children,
             &ElementSize,
         ),
         mut position: Vec3,
@@ -546,43 +543,23 @@ fn create_element(
         mesh_assets: &mut Assets<Mesh>,
         meshes: &HashMap<MyMeshes, Mesh2dHandle>,
         font: &Handle<Font>,
-        texts: &Query<&Text>,
         root: &Query<(Entity, &Transform), With<RootTransform>>,
     ) {
         // Root may be moved wherever. This element is starting at the given position, unaffected by
         // root transform.
-        let inverted_root = root
+        let (root_entity, inverted_root) = root
             .iter()
             .next()
-            .map(|(_, transform)| Transform::from_matrix(transform.compute_matrix().inverse()));
-        position = inverted_root.unwrap_or_default() * position;
+            .map(|(e, t)| (e, Transform::from_matrix(t.compute_matrix().inverse())))
+            .unwrap();
+        position = inverted_root * position;
 
-        let (SidebarElement(effect), _, mesh, material, children, element_size) = data;
-        let label = children
-            .iter()
-            // Ignore non-text entities.
-            .filter_map(|c| texts.get(*c).ok())
-            // Defensively make a multi-line text. It should always be a single line though.
-            .map(|t| {
-                t.sections.iter().map(|section| &section.value).fold(
-                    "".to_string(),
-                    |mut lines, section| {
-                        lines.push('\n');
-                        lines.push_str(section);
-                        lines
-                    },
-                )
-            })
-            .next()
-            .unwrap_or_else(|| {
-                eprintln!("Failed to find the text on the template element.");
-                String::new()
-            });
+        let (SidebarElement(effect), _, mesh, material, element_size) = data;
         let io_pad_mesh = meshes.get(&MyMeshes::IoConnector).unwrap().clone();
         let new = create_pipeline_element(
             effect,
             cmds,
-            &label,
+            effect.name(),
             (*material).clone(),
             materials,
             image_assets,
@@ -604,7 +581,7 @@ fn create_element(
                 base: Transform::from_translation(position),
             });
         // Enable root transformations.
-        cmds.entity(root.iter().next().unwrap().0).add_child(new);
+        cmds.entity(root_entity).add_child(new);
     }
 
     let newly_clicked = changed_interactions
@@ -627,7 +604,6 @@ fn create_element(
             mesh_assets.as_mut(),
             meshes.as_ref(),
             font.as_ref(),
-            &texts,
             &root,
         );
     }
