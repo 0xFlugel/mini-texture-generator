@@ -801,12 +801,8 @@ fn create_pipeline_element(
     }
 
     // Create the texture display above the consuming pipeline elements.
-    let add_texture_display = !template
-        && matches!(
-            effect,
-            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. }
-        );
-    let (effect, texture) = if add_texture_display {
+    let resolution = effect.size().filter(|_| !template);
+    let (effect, texture) = if let Some(resolution) = resolution {
         let size = element_size.0.width;
         let transform = Transform::from_translation(Vec3::new(
             0.0,
@@ -816,8 +812,15 @@ fn create_pipeline_element(
             // program.
             0.9,
         ));
-        let (texture, image_handle) =
-            create_image_entity(cmds, mesh_assets, materials, image_assets, size, transform);
+        let (texture, image_handle) = create_image_entity(
+            cmds,
+            mesh_assets,
+            materials,
+            image_assets,
+            size,
+            transform,
+            resolution,
+        );
         cmds.entity(texture)
             .insert_bundle(InteractionBundle::default());
         let linked = match effect {
@@ -1071,16 +1074,17 @@ fn create_image_entity(
     image_assets: &mut Assets<Image>,
     size: f32,
     transform: Transform,
+    resolution: Size<u32>,
 ) -> (Entity, Handle<Image>) {
     let handle = image_assets.add(Image::new(
         Extent3d {
-            width: DEFAULT_TEXTURE_SIZE.width,
-            height: DEFAULT_TEXTURE_SIZE.height,
+            width: resolution.width,
+            height: resolution.height,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
         std::iter::repeat(Color::GRAY.as_rgba_f32())
-            .take(DEFAULT_TEXTURE_SIZE.width as usize * DEFAULT_TEXTURE_SIZE.height as usize)
+            .take(resolution.width as usize * resolution.height as usize)
             .flatten()
             .flat_map(LOCAL_TO_GPU_BYTE_ORDER)
             .collect(),
