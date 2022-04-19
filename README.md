@@ -1,7 +1,9 @@
 README
 ===
 
-This project is a small texture generator tool that is build on [Bevy](https://bevyengine.org/) to (i) learn to work with bevy, (ii) learn to work an ECS and (iv) make a program with pipeline based data transformation.
+![](title.png)
+
+This project is a small texture generator tool that is build on [Bevy](https://bevyengine.org/) to learn to work with bevy, learn to work an ECS and make a program with pipeline based data transformation.
 
 Controls
 ---
