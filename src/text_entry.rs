@@ -1,4 +1,4 @@
-use crate::{Effect, MyInteraction};
+use crate::{Dirty, Effect, MyInteraction};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::MouseWheel;
 use bevy::input::ElementState;
@@ -181,6 +181,7 @@ impl TextEntryPlugin {
 
     /// Manipulates effect parameters based on changes to the text in text fields.
     fn update_bound_parameter(
+        mut cmds: Commands,
         text: Query<(&TextValue, &ValueBinding), Changed<TextValue>>,
         mut params: Query<&mut Effect>,
         mut image_assets: ResMut<Assets<Image>>,
@@ -195,60 +196,63 @@ impl TextEntryPlugin {
         {
             if let Some(parsed) = *parsed {
                 match params.get_mut(*entity) {
-                    Ok(mut effect) => match effect.as_mut() {
-                        Effect::Constant { value } => *value = parsed,
-                        Effect::Rotate { degrees } => *degrees = parsed,
-                        Effect::Offset { x, y } => {
-                            if *parameter_idx == 0 {
-                                *x = parsed
-                            } else {
-                                *y = parsed
-                            }
-                        }
-                        Effect::Scale { x, y } => {
-                            if *parameter_idx == 0 {
-                                *x = parsed
-                            } else {
-                                *y = parsed
-                            }
-                        }
-                        Effect::SimplexNoise { seed, cache } => {
-                            *seed = parsed.round() as u32;
-                            cache
-                                .get_mut()
-                                .expect("Failed to get lock on cache.")
-                                .change_seed(*seed);
-                        }
-                        Effect::Rgba { resolution, target }
-                        | Effect::Hsva { resolution, target }
-                        | Effect::Gray { resolution, target } => {
-                            if *parameter_idx == 0 {
-                                resolution.width = parsed as u32;
-                            } else {
-                                resolution.height = parsed as u32;
-                            }
-                            if resolution.width != 0 && resolution.height != 0 {
-                                if let Some(target) =
-                                    target.as_ref().and_then(|t| image_assets.get_mut(t))
-                                {
-                                    target.resize(Extent3d {
-                                        width: resolution.width,
-                                        height: resolution.height,
-                                        depth_or_array_layers: 1,
-                                    });
+                    Ok(mut effect) => {
+                        cmds.entity(*entity).insert(Dirty);
+                        match effect.as_mut() {
+                            Effect::Constant { value } => *value = parsed,
+                            Effect::Rotate { degrees } => *degrees = parsed,
+                            Effect::Offset { x, y } => {
+                                if *parameter_idx == 0 {
+                                    *x = parsed
+                                } else {
+                                    *y = parsed
                                 }
                             }
+                            Effect::Scale { x, y } => {
+                                if *parameter_idx == 0 {
+                                    *x = parsed
+                                } else {
+                                    *y = parsed
+                                }
+                            }
+                            Effect::SimplexNoise { seed, cache } => {
+                                *seed = parsed.round() as u32;
+                                cache
+                                    .get_mut()
+                                    .expect("Failed to get lock on cache.")
+                                    .change_seed(*seed);
+                            }
+                            Effect::Rgba { resolution, target }
+                            | Effect::Hsva { resolution, target }
+                            | Effect::Gray { resolution, target } => {
+                                if *parameter_idx == 0 {
+                                    resolution.width = parsed as u32;
+                                } else {
+                                    resolution.height = parsed as u32;
+                                }
+                                if resolution.width != 0 && resolution.height != 0 {
+                                    if let Some(target) =
+                                        target.as_ref().and_then(|t| image_assets.get_mut(t))
+                                    {
+                                        target.resize(Extent3d {
+                                            width: resolution.width,
+                                            height: resolution.height,
+                                            depth_or_array_layers: 1,
+                                        });
+                                    }
+                                }
+                            }
+                            Effect::LinearX
+                            | Effect::Add
+                            | Effect::Sub
+                            | Effect::Mul
+                            | Effect::Div
+                            | Effect::SineX
+                            | Effect::StepX
+                            | Effect::Cartesian2PolarCoords
+                            | Effect::Polar2CartesianCoords => {}
                         }
-                        Effect::LinearX
-                        | Effect::Add
-                        | Effect::Sub
-                        | Effect::Mul
-                        | Effect::Div
-                        | Effect::SineX
-                        | Effect::StepX
-                        | Effect::Cartesian2PolarCoords
-                        | Effect::Polar2CartesianCoords => {}
-                    },
+                    }
                     _ => eprintln!("Text field bound to non-effect."),
                 }
             }

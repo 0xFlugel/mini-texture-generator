@@ -20,7 +20,7 @@ mod persistence;
 mod text_entry;
 mod util;
 
-use crate::connection_management::{delete_connection, Connection};
+use crate::connection_management::{delete_connection, Connection, ConnectionAttachment};
 use crate::interaction::{InteractionPlugin, Scroll};
 use crate::math::SimplexSampler;
 use crate::text_entry::{TextEntryPlugin, TextValue, ValueBinding};
@@ -133,6 +133,7 @@ fn main() {
         )
         .add_system(connection_management::highlight_connection_acceptor)
         .add_system(connection_management::finish_connection)
+        .add_system(bubble_up_dirty)
         .add_system(update_texture)
         .add_system(util::image_modified_detection)
         .add_system(save_image)
@@ -276,9 +277,49 @@ fn delete_pipeline_element(
     }
 }
 
+/// A dirty flag to be set on all texure displays (RGBA, HSVA, GRAY) when a dependency is changed in
+/// any way.
+#[derive(Component)]
+struct Dirty;
+
+/// Move the dirty flag from an effect to all end displays.
+fn bubble_up_dirty(
+    mut cmds: Commands,
+    dirty: Query<(Entity, &Effect, &OutputConnectors), With<Dirty>>,
+    output_connectors: Query<&OutputConnector>,
+    connections: Query<&Connection>,
+    parents: Query<&Parent>,
+) {
+    let mut remove = vec![];
+    for (entity, effect, outputs) in dirty.iter() {
+        if effect.size().is_none() {
+            remove.push(entity);
+            let dependents = outputs
+                .0
+                .iter()
+                .flat_map(|e| &output_connectors.get(*e).unwrap().0)
+                .filter_map(|c| match connections.get(*c).unwrap().input_connector {
+                    ConnectionAttachment::Connector(e) => parents.get(e).ok(),
+                    _ => None,
+                });
+            for Parent(entity) in dependents {
+                cmds.entity(*entity).insert(Dirty);
+            }
+        }
+    }
+    for entity in remove {
+        cmds.entity(entity).remove::<Dirty>();
+    }
+}
+
 /// React to changes in connections and update the pipeline (i.e. texture generation function)
 /// accordingly.
 fn update_texture(
+    mut cmds: Commands,
+    dirty_effects: Query<
+        (Entity, &Effect, &InputConnectors),
+        (Without<SidebarElement>, With<Dirty>),
+    >,
     effects: Query<(&Effect, &InputConnectors), Without<SidebarElement>>,
     connections: Query<&Connection>,
     input_connectors: Query<&InputConnector>,
@@ -408,7 +449,8 @@ fn update_texture(
         }
     }
 
-    for (effect, inputs) in effects.iter() {
+    for (entity, effect, inputs) in dirty_effects.iter() {
+        cmds.entity(entity).remove::<Dirty>();
         let image_size = match effect {
             Effect::Rgba {
                 target: Some(h),
