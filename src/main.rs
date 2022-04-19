@@ -67,7 +67,10 @@ const IO_PAD_SIZE: f32 = 2. / 3. * LINE_HEIGHT;
 const HIGHLIGHT_SCALING: f32 = 1.5;
 
 /// Number of pixels in each direction of the 2D texture.
-const TEXTURE_SIZE: u32 = 16;
+const DEFAULT_TEXTURE_SIZE: Size<u32> = Size {
+    width: 16,
+    height: 16,
+};
 /// A multiplier to the OS scroll distance for vertical scrolling.
 const SCROLL_MULTIPLIER: f32 = -3.0;
 //// A multiplier for stepping through scale factors in the main view.
@@ -154,7 +157,7 @@ enum MetaEvent {
 
 /// Save generated images with a click to a new file with a random name.
 fn save_image(
-    images: Query<(&MyInteraction, &Handle<ColorMaterial>), Changed<MyInteraction>>,
+    images: Query<(&MyInteraction, &Handle<ColorMaterial>, &Effect), Changed<MyInteraction>>,
     material_assets: Res<Assets<ColorMaterial>>,
     image_assets: Res<Assets<Image>>,
 ) {
@@ -195,21 +198,18 @@ fn save_image(
         .filter(|p| !p.exists());
     let images = images
         .iter()
-        .filter(|(act, _)| act == &&MyInteraction::PressedLeft)
-        .filter_map(|(_, material)| {
+        .filter(|(act, _, _)| act == &&MyInteraction::PressedLeft)
+        .filter_map(|(_, material, effect)| {
             material_assets
                 .get(material)
                 .and_then(|mat| mat.texture.as_ref())
                 .and_then(|img_handle| image_assets.get(img_handle.clone()))
+                .and_then(|img| effect.size().map(|size| (img, size)))
         });
-    for (img, path) in images.zip(paths) {
+    for ((img, size), path) in images.zip(paths) {
         match File::create(path.as_path()) {
             Ok(file) => {
-                if let Err(e) = write_ppm_image(
-                    &mut BufWriter::new(file),
-                    &img.data,
-                    Size::new(TEXTURE_SIZE, TEXTURE_SIZE),
-                ) {
+                if let Err(e) = write_ppm_image(&mut BufWriter::new(file), &img.data, size) {
                     eprintln!(
                         "Failed to export image to file \"{}\": {}",
                         path.display(),
@@ -287,8 +287,8 @@ fn update_texture(
 ) {
     const ELEM_SIZE: usize = size_of::<PixelData>();
 
-    fn write_pixel(img: &mut Image, at: XY<u32>, pixel: Color) {
-        let offset = (at.y * TEXTURE_SIZE + at.x) as usize * ELEM_SIZE;
+    fn write_pixel(img: &mut Image, at: XY<u32>, pixel: Color, width: u32) {
+        let offset = (at.y * width + at.x) as usize * ELEM_SIZE;
         let pixel = pixel
             .as_rgba_f32()
             .into_iter()
@@ -348,7 +348,7 @@ fn update_texture(
                 unreachable!()
             }
             Effect::Constant { value } => Some(*value),
-            Effect::LinearX => Some(at.x as f32 / TEXTURE_SIZE as f32 + 0.5),
+            Effect::LinearX => Some(at.x as f32 / DEFAULT_TEXTURE_SIZE.width as f32 + 0.5),
             Effect::Rotate { .. }
             | Effect::Offset { .. }
             | Effect::Scale { .. }
@@ -358,7 +358,9 @@ fn update_texture(
             Effect::Sub => binary_op(&|a, b| a - b),
             Effect::Mul => binary_op(&|a, b| a * b),
             Effect::Div => binary_op(&|a, b| a / b),
-            Effect::SineX => Some(0.5 * (at.x / TEXTURE_SIZE as f32 * (2.0 * PI)).sin() + 0.5),
+            Effect::SineX => {
+                Some(0.5 * (at.x / DEFAULT_TEXTURE_SIZE.width as f32 * (2.0 * PI)).sin() + 0.5)
+            }
             Effect::StepX => Some((at.x >= 0.0) as u8 as f32),
             Effect::SimplexNoise { cache, seed: _, .. } => Some(
                 cache
@@ -407,24 +409,36 @@ fn update_texture(
     }
 
     for (effect, inputs) in effects.iter() {
-        let image = match effect {
-            Effect::Rgba { target: Some(h) }
-            | Effect::Hsva { target: Some(h) }
-            | Effect::Gray { target: Some(h) } => image_assets.get_mut(h),
-            Effect::Rgba { target: None }
-            | Effect::Hsva { target: None }
-            | Effect::Gray { target: None } => {
+        let image_size = match effect {
+            Effect::Rgba {
+                target: Some(h),
+                resolution,
+                ..
+            }
+            | Effect::Hsva {
+                target: Some(h),
+                resolution,
+                ..
+            }
+            | Effect::Gray {
+                target: Some(h),
+                resolution,
+                ..
+            } => image_assets.get_mut(h).map(|img| (img, resolution)),
+            Effect::Rgba { target: None, .. }
+            | Effect::Hsva { target: None, .. }
+            | Effect::Gray { target: None, .. } => {
                 eprintln!("Consumer does not have a display.");
                 None
             }
             _ => None,
         };
-        if let Some(image) = image {
-            let origin = Vec2::splat(TEXTURE_SIZE as f32 / 2.0);
+        if let Some((image, size)) = image_size {
+            let center = Vec2::new(size.width as f32, size.height as f32) / 2.0;
             let index_to_pixel_center_offset = Vec2::splat(0.5);
-            for x in 0..TEXTURE_SIZE {
-                for y in 0..TEXTURE_SIZE {
-                    let at = Vec2::new(x as f32, y as f32) - origin + index_to_pixel_center_offset;
+            for x in 0..size.width {
+                for y in 0..size.height {
+                    let at = Vec2::new(x as f32, y as f32) - center + index_to_pixel_center_offset;
                     let inputs = inputs
                         .0
                         .iter()
@@ -461,7 +475,7 @@ fn update_texture(
                         ),
                         _ => unreachable!(),
                     };
-                    write_pixel(image, XY { x, y }, color);
+                    write_pixel(image, XY { x, y }, color, size.width);
                 }
             }
         }
@@ -805,14 +819,17 @@ fn create_pipeline_element(
         cmds.entity(texture)
             .insert_bundle(InteractionBundle::default());
         let linked = match effect {
-            Effect::Rgba { .. } => Effect::Rgba {
+            Effect::Rgba { resolution, .. } => Effect::Rgba {
                 target: Some(image_handle),
+                resolution: *resolution,
             },
-            Effect::Hsva { .. } => Effect::Hsva {
+            Effect::Hsva { resolution, .. } => Effect::Hsva {
                 target: Some(image_handle),
+                resolution: *resolution,
             },
-            Effect::Gray { .. } => Effect::Gray {
+            Effect::Gray { resolution, .. } => Effect::Gray {
                 target: Some(image_handle),
+                resolution: *resolution,
             },
             Effect::Constant { .. }
             | Effect::LinearX
@@ -1055,13 +1072,13 @@ fn create_image_entity(
 ) -> (Entity, Handle<Image>) {
     let handle = image_assets.add(Image::new(
         Extent3d {
-            width: TEXTURE_SIZE,
-            height: TEXTURE_SIZE,
+            width: DEFAULT_TEXTURE_SIZE.width,
+            height: DEFAULT_TEXTURE_SIZE.height,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
         std::iter::repeat(Color::GRAY.as_rgba_f32())
-            .take(TEXTURE_SIZE as usize * TEXTURE_SIZE as usize)
+            .take(DEFAULT_TEXTURE_SIZE.width as usize * DEFAULT_TEXTURE_SIZE.height as usize)
             .flatten()
             .flat_map(LOCAL_TO_GPU_BYTE_ORDER)
             .collect(),
@@ -1090,18 +1107,21 @@ enum Effect {
     /// The sidebar (i.e. template) elements do not have a texture.
     Rgba {
         target: Option<Handle<Image>>,
+        resolution: Size<u32>,
     },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
     Hsva {
         target: Option<Handle<Image>>,
+        resolution: Size<u32>,
     },
     /// Holds the entity that has a texture component which shows the generated texture.
     ///
     /// The sidebar (i.e. template) elements do not have a texture.
     Gray {
         target: Option<Handle<Image>>,
+        resolution: Size<u32>,
     },
     /// Holds the constant value that is used for all sampled coordinates.
     Constant {
@@ -1148,14 +1168,17 @@ enum Effect {
 impl Clone for Effect {
     fn clone(&self) -> Self {
         match self {
-            Effect::Rgba { target } => Effect::Rgba {
+            Effect::Rgba { target, resolution } => Effect::Rgba {
                 target: (*target).clone(),
+                resolution: *resolution,
             },
-            Effect::Hsva { target } => Effect::Hsva {
+            Effect::Hsva { target, resolution } => Effect::Hsva {
                 target: (*target).clone(),
+                resolution: *resolution,
             },
-            Effect::Gray { target } => Effect::Gray {
+            Effect::Gray { target, resolution } => Effect::Gray {
                 target: (*target).clone(),
+                resolution: *resolution,
             },
             Effect::Constant { value } => Effect::Constant { value: *value },
             Effect::LinearX => Effect::LinearX,
@@ -1195,9 +1218,18 @@ impl Effect {
     /// A list of all variants.
     fn all() -> Vec<Self> {
         vec![
-            Self::Rgba { target: None },
-            Self::Hsva { target: None },
-            Self::Gray { target: None },
+            Self::Rgba {
+                target: None,
+                resolution: DEFAULT_TEXTURE_SIZE,
+            },
+            Self::Hsva {
+                target: None,
+                resolution: DEFAULT_TEXTURE_SIZE,
+            },
+            Self::Gray {
+                target: None,
+                resolution: DEFAULT_TEXTURE_SIZE,
+            },
             Self::Constant { value: 1.0 },
             Self::LinearX,
             Self::Rotate { degrees: 1.0 },
@@ -1290,10 +1322,8 @@ impl Effect {
     /// The names of internal parameters of each variant.
     fn controls(&self) -> &'static [&'static str] {
         match self {
-            Effect::Rgba { .. }
-            | Effect::Hsva { .. }
-            | Effect::Gray { .. }
-            | Effect::LinearX
+            Effect::Rgba { .. } | Effect::Hsva { .. } | Effect::Gray { .. } => &["Width", "Height"],
+            Effect::LinearX
             | Effect::Add
             | Effect::Sub
             | Effect::Mul
@@ -1334,6 +1364,17 @@ impl Effect {
 
     fn parameter(&self, idx: usize) -> f32 {
         match self {
+            Effect::Rgba { resolution, .. }
+            | Effect::Hsva { resolution, .. }
+            | Effect::Gray { resolution, .. }
+                if idx < 2 =>
+            {
+                if idx == 0 {
+                    resolution.width as f32
+                } else {
+                    resolution.height as f32
+                }
+            }
             Effect::Constant { value: p } | Effect::Rotate { degrees: p } if idx == 0 => *p,
             Effect::Offset { x, y } | Effect::Scale { x, y } if idx < 2 => {
                 if idx == 0 {
@@ -1362,6 +1403,28 @@ impl Effect {
             | Effect::Polar2CartesianCoords => {
                 panic!("Parameter does not exist.")
             }
+        }
+    }
+
+    fn size(&self) -> Option<Size<u32>> {
+        match self {
+            Effect::Rgba { resolution, .. }
+            | Effect::Hsva { resolution, .. }
+            | Effect::Gray { resolution, .. } => Some(*resolution),
+            Effect::Constant { .. }
+            | Effect::LinearX
+            | Effect::Rotate { .. }
+            | Effect::Offset { .. }
+            | Effect::Scale { .. }
+            | Effect::Add
+            | Effect::Sub
+            | Effect::Mul
+            | Effect::Div
+            | Effect::SineX
+            | Effect::StepX
+            | Effect::SimplexNoise { .. }
+            | Effect::Cartesian2PolarCoords
+            | Effect::Polar2CartesianCoords => None,
         }
     }
 }

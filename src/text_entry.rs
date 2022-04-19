@@ -3,6 +3,7 @@ use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::MouseWheel;
 use bevy::input::ElementState;
 use bevy::prelude::*;
+use bevy::render::render_resource::Extent3d;
 use std::ops::BitXor;
 
 pub(crate) struct TextEntryPlugin;
@@ -182,6 +183,7 @@ impl TextEntryPlugin {
     fn update_bound_parameter(
         text: Query<(&TextValue, &ValueBinding), Changed<TextValue>>,
         mut params: Query<&mut Effect>,
+        mut image_assets: ResMut<Assets<Image>>,
     ) {
         for (
             TextValue { parsed, .. },
@@ -217,10 +219,27 @@ impl TextEntryPlugin {
                                 .expect("Failed to get lock on cache.")
                                 .change_seed(*seed);
                         }
-                        Effect::Rgba { .. }
-                        | Effect::Hsva { .. }
-                        | Effect::Gray { .. }
-                        | Effect::LinearX
+                        Effect::Rgba { resolution, target }
+                        | Effect::Hsva { resolution, target }
+                        | Effect::Gray { resolution, target } => {
+                            if *parameter_idx == 0 {
+                                resolution.width = parsed as u32;
+                            } else {
+                                resolution.height = parsed as u32;
+                            }
+                            if resolution.width != 0 && resolution.height != 0 {
+                                if let Some(target) =
+                                    target.as_ref().and_then(|t| image_assets.get_mut(t))
+                                {
+                                    target.resize(Extent3d {
+                                        width: resolution.width,
+                                        height: resolution.height,
+                                        depth_or_array_layers: 1,
+                                    });
+                                }
+                            }
+                        }
+                        Effect::LinearX
                         | Effect::Add
                         | Effect::Sub
                         | Effect::Mul
