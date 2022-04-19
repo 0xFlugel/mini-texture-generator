@@ -242,7 +242,7 @@ pub(crate) fn save_to_file(
         type OutputConnectorIndex = ConnectorIndex;
         type InputConnectorIndex = ConnectorIndex;
 
-        // Pre-built an index maps so that we do not need to resolve many times or work on partially
+        // Pre-build index maps so that we do not need to resolve many times or work on partially
         // available data when building the ElementState.
         let entity_indices = HashMap::<Entity, ArrayIndex>::from_iter(
             elements.iter().enumerate().map(|(i, (e, ..))| (e, i)),
