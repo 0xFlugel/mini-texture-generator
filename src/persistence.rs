@@ -122,10 +122,17 @@ fn set_parameters(effect: &mut Effect, parameters: &Vec<f32>) {
                 *y = *p;
             }
         }
-        Effect::Rgba { .. }
-        | Effect::Hsva { .. }
-        | Effect::Gray { .. }
-        | Effect::LinearX
+        Effect::Rgba { resolution, .. }
+        | Effect::Hsva { resolution, .. }
+        | Effect::Gray { resolution, .. } => {
+            if let Some(p) = parameters.get(0) {
+                resolution.width = *p as u32;
+            }
+            if let Some(p) = parameters.get(1) {
+                resolution.height = *p as u32;
+            }
+        }
+        Effect::LinearX
         | Effect::Add
         | Effect::Sub
         | Effect::Mul
@@ -285,10 +292,12 @@ pub(crate) fn save_to_file(
                 Effect::SimplexNoise { seed, .. } => vec![*seed as f32],
                 Effect::Rotate { degrees: p1 } | Effect::Constant { value: p1 } => vec![*p1],
                 Effect::Offset { x, y } | Effect::Scale { x, y } => vec![*x, *y],
-                Effect::Rgba { .. }
-                | Effect::Hsva { .. }
-                | Effect::Gray { .. }
-                | Effect::LinearX
+                Effect::Rgba { resolution, .. }
+                | Effect::Hsva { resolution, .. }
+                | Effect::Gray { resolution, .. } => {
+                    vec![resolution.width as f32, resolution.height as f32]
+                }
+                Effect::LinearX
                 | Effect::Add
                 | Effect::Sub
                 | Effect::Mul
