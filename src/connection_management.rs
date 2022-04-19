@@ -179,9 +179,6 @@ pub(crate) fn highlight_connection_acceptor(
     >,
     mut highlighted: Local<HashMap<Entity, Transform>>,
 ) {
-    //TODO Make the function more readable.
-    //TODO Exlude same-type-connectors (input-input, out-out).
-
     // Update drop_on field.
     // Depends on the `highlighted` data from the last update.
     if let Some(mut f) = floating_connectors.iter_mut().next() {
