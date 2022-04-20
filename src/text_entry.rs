@@ -1,4 +1,4 @@
-use crate::{Dirty, Effect, MyInteraction};
+use crate::{Dirty, Disabled, Effect, MyInteraction};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::MouseWheel;
 use bevy::input::ElementState;
@@ -143,10 +143,13 @@ impl TextEntryPlugin {
 
     /// A system to increment or decrement the lowest written digit of the parameter by mouse wheel.
     fn value_scrolling(
-        mut entry_fields: Query<(&MyInteraction, &mut TextValue), With<TextValue>>,
+        mut entry_fields: Query<
+            (&MyInteraction, &mut TextValue),
+            (With<TextValue>, Without<Disabled>),
+        >,
         mut input: EventReader<MouseWheel>,
     ) {
-        if let Some(wheel) = input.iter().next() {
+        for wheel in input.iter() {
             if wheel.y.abs() > f32::EPSILON {
                 let hovered = entry_fields
                     .iter_mut()

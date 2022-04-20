@@ -1,4 +1,7 @@
-use crate::{RootTransform, LINE_HEIGHT, SCALE_FACTOR, SCROLL_MULTIPLIER};
+use crate::connection_management::FloatingConnector;
+use crate::{
+    RootTransform, SidebarElement, TextValue, LINE_HEIGHT, SCALE_FACTOR, SCROLL_MULTIPLIER,
+};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -150,7 +153,13 @@ impl InteractionPlugin {
         mouse_buttons: Res<Input<MouseButton>>,
         mut mouse_wheels: EventReader<MouseWheel>,
         mut prev_position: Local<Option<Vec2>>,
-        interactions: Query<&MyInteraction>,
+        interactions: Query<(
+            &MyInteraction,
+            Option<&TextValue>,
+            Option<&SidebarElement>,
+            Option<&Scroll>,
+            Option<&FloatingConnector>,
+        )>,
         windows: Res<Windows>,
         cam: Query<&Camera>,
     ) {
@@ -168,7 +177,11 @@ impl InteractionPlugin {
         // * element manipulation,
         // * sidebar manipulation or
         // * root manipulation.
-        let shall_affect_root = interactions.iter().all(|i| i == &MyInteraction::None);
+        //Ignore mouse wheel events if it was on a TextValue, SidebarElement or things with a scroll
+        // component (i.e. the sidebar).
+        let shall_affect_root = interactions.iter().all(|(i, t, s, se, f)| {
+            i == &MyInteraction::None || (t.is_none() && s.is_none() && se.is_none() && f.is_none())
+        });
 
         if shall_affect_root {
             if let Some(mut transform) = root.iter_mut().next() {
@@ -211,7 +224,8 @@ impl InteractionPlugin {
     /// component.
     fn sidebar_scrolling(
         mut inputs: EventReader<MouseWheel>,
-        mut hovered: Query<(&mut Transform, &MyInteraction, &mut Scroll)>,
+        mut hovered: Query<(Entity, &mut Transform, &MyInteraction, &mut Scroll)>,
+        children: Query<(&Parent, &MyInteraction), With<SidebarElement>>,
     ) {
         for MouseWheel { y, unit, .. } in inputs.iter() {
             let delta = SCROLL_MULTIPLIER
@@ -221,11 +235,16 @@ impl InteractionPlugin {
                     // 1.0 is the pixel size because the camera is using Window coordinates.
                     MouseScrollUnit::Pixel => 1.0,
                 };
-            for (transform, interaction, scroll) in hovered.iter_mut() {
-                let mut transform: Mut<Transform> = transform;
-                let interaction: &MyInteraction = interaction;
-                let mut scroll: Mut<Scroll> = scroll;
-                if interaction == &MyInteraction::Hover {
+            let direct = hovered
+                .iter()
+                .filter(|(_, _, i, _)| i == &&MyInteraction::Hover)
+                .map(|(e, ..)| e);
+            let bubbled_up = children
+                .iter()
+                .filter(|(_, i)| i == &&MyInteraction::Hover)
+                .map(|(Parent(p), _)| *p);
+            for entity in direct.chain(bubbled_up).collect::<Vec<_>>() {
+                if let Ok((_, mut transform, _, mut scroll)) = hovered.get_mut(entity) {
                     let Scroll {
                         size,
                         range,
