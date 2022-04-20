@@ -210,7 +210,8 @@ impl InteractionPlugin {
     fn sidebar_scrolling(
         mut inputs: EventReader<MouseWheel>,
         mut hovered: Query<(Entity, &mut Transform, &MyInteraction, &mut Scroll)>,
-        children: Query<(&Parent, &MyInteraction), With<SidebarElement>>,
+        sidebar_elements: Query<(&Parent, &MyInteraction), With<SidebarElement>>,
+        children: Query<(&Parent, &MyInteraction)>,
         keys: Res<Input<KeyCode>>,
     ) {
         // Always read the events as they are stored up if not.
@@ -235,6 +236,12 @@ impl InteractionPlugin {
             let bubbled_up = children
                 .iter()
                 .filter(|(_, i)| i == &&MyInteraction::Hover)
+                .filter_map(|(Parent(p), _)| sidebar_elements.get(*p).ok())
+                .chain(
+                    sidebar_elements
+                        .iter()
+                        .filter(|(_, i)| i == &&MyInteraction::Hover),
+                )
                 .map(|(Parent(p), _)| *p);
             for entity in direct.chain(bubbled_up).collect::<Vec<_>>() {
                 if let Ok((_, mut transform, _, mut scroll)) = hovered.get_mut(entity) {
