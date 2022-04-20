@@ -146,7 +146,7 @@ impl TextEntryPlugin {
         mut entry_fields: Query<(&MyInteraction, &mut TextValue), With<TextValue>>,
         mut input: EventReader<MouseWheel>,
     ) {
-        if let Some(wheel) = input.iter().next() {
+        for wheel in input.iter() {
             if wheel.y.abs() > f32::EPSILON {
                 let hovered = entry_fields
                     .iter_mut()
