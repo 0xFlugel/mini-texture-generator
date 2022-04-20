@@ -201,7 +201,7 @@ pub(crate) fn create_pipeline_element(
             element_size.0.height / 2.0 + size / 2.0,
             // Raise the texture above all other elements as that is the central part of the entire
             // program.
-            0.9,
+            0.5,
         ));
         let (texture, image_handle) = create_image_entity(
             cmds,
