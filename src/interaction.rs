@@ -1,5 +1,8 @@
 use crate::connection_management::FloatingConnector;
-use crate::{RootTransform, SidebarElement, TextValue, LINE_HEIGHT, SCALE_FACTOR, SCROLL_MULTIPLIER, Effect};
+use crate::{
+    Effect, InputConnector, OutputConnector, RootTransform, SidebarElement, TextValue, LINE_HEIGHT,
+    SCALE_FACTOR, SCROLL_MULTIPLIER,
+};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -158,6 +161,8 @@ impl InteractionPlugin {
             Option<&Scroll>,
             Option<&FloatingConnector>,
             Option<&Effect>,
+            Option<&InputConnector>,
+            Option<&OutputConnector>,
         )>,
         windows: Res<Windows>,
         cam: Query<&Camera>,
@@ -178,12 +183,22 @@ impl InteractionPlugin {
         // * root manipulation.
         //Ignore mouse wheel events if it was on a TextValue, SidebarElement or things with a scroll
         // component (i.e. the sidebar).
-        let shall_affect_root = interactions.iter().all(|(i, t, s, se, f, e)| {
-            i == &MyInteraction::None || (t.is_none() && s.is_none() && se.is_none() && f.is_none() && e.is_none())
+        let shall_affect_move = interactions.iter().all(|(i, t, s, se, f, e, inp, outp)| {
+            i == &MyInteraction::None
+                || (t.is_none() && s.is_none() && se.is_none() && f.is_none() && e.is_none())
+        });
+        let shall_affect_wheel = interactions.iter().all(|(i, t, s, se, f, e, inp, outp)| {
+            i == &MyInteraction::None
+                || (t.is_none()
+                    && s.is_none()
+                    && se.is_none()
+                    && f.is_none()
+                    && inp.is_none()
+                    && outp.is_none())
         });
 
-        if shall_affect_root {
-            if let Some(mut transform) = root.iter_mut().next() {
+        if let Some(mut transform) = root.iter_mut().next() {
+            if shall_affect_wheel {
                 // Scaling (at cursor position).
                 if scale_units.abs() > 0.5 {
                     let window = windows.get_primary().unwrap();
@@ -201,12 +216,13 @@ impl InteractionPlugin {
                         * Transform::from_translation(-fix_point)
                         * *transform;
                 }
+            }
 
+            if shall_affect_move {
                 // Dragging
                 if mouse_buttons.pressed(MouseButton::Left) {
                     let current_position = mouse_position.position;
                     let translation = (*prev_position)
-                        .filter(|_| shall_affect_root)
                         .map(|prev| (current_position - prev).extend(0.0))
                         .unwrap_or_default();
                     transform.translation += translation;
