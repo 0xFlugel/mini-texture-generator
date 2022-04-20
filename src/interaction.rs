@@ -1,7 +1,5 @@
 use crate::connection_management::FloatingConnector;
-use crate::{
-    RootTransform, SidebarElement, TextValue, LINE_HEIGHT, SCALE_FACTOR, SCROLL_MULTIPLIER,
-};
+use crate::{RootTransform, SidebarElement, TextValue, LINE_HEIGHT, SCALE_FACTOR, SCROLL_MULTIPLIER, Effect};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -159,6 +157,7 @@ impl InteractionPlugin {
             Option<&SidebarElement>,
             Option<&Scroll>,
             Option<&FloatingConnector>,
+            Option<&Effect>,
         )>,
         windows: Res<Windows>,
         cam: Query<&Camera>,
@@ -179,8 +178,8 @@ impl InteractionPlugin {
         // * root manipulation.
         //Ignore mouse wheel events if it was on a TextValue, SidebarElement or things with a scroll
         // component (i.e. the sidebar).
-        let shall_affect_root = interactions.iter().all(|(i, t, s, se, f)| {
-            i == &MyInteraction::None || (t.is_none() && s.is_none() && se.is_none() && f.is_none())
+        let shall_affect_root = interactions.iter().all(|(i, t, s, se, f, e)| {
+            i == &MyInteraction::None || (t.is_none() && s.is_none() && se.is_none() && f.is_none() && e.is_none())
         });
 
         if shall_affect_root {
