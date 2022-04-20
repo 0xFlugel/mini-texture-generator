@@ -311,7 +311,7 @@ fn save_image(
 /// Delete a pipeline element by right clicking.
 fn right_click_deletes_element(
     mut cmds: Commands,
-    to_delete: Query<(Entity, &MyInteraction), With<Effect>>,
+    to_delete: Query<(Entity, &MyInteraction), (With<Effect>, Without<Disabled>)>,
     connections: Query<&mut Connection>,
     mut inputs: Query<&mut InputConnector>,
     mut outputs: Query<&mut OutputConnector>,
