@@ -384,7 +384,7 @@ fn update_texture(
                 unreachable!()
             }
             Effect::Constant { value } => Some(*value),
-            Effect::LinearX => Some(at.x as f32 / DEFAULT_TEXTURE_SIZE.width as f32 + 0.5),
+            Effect::LinearX => Some(at.x as f32 + 0.5),
             Effect::Rotate { .. }
             | Effect::Offset { .. }
             | Effect::Scale { .. }
