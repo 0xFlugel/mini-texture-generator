@@ -1,8 +1,4 @@
-use crate::connection_management::FloatingConnector;
-use crate::{
-    Effect, InputConnector, OutputConnector, RootTransform, SidebarElement, TextValue, LINE_HEIGHT,
-    SCALE_FACTOR, SCROLL_MULTIPLIER,
-};
+use crate::{RootTransform, SidebarElement, LINE_HEIGHT, SCALE_FACTOR, SCROLL_MULTIPLIER};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
 use bevy::input::ElementState;
 use bevy::prelude::*;
@@ -146,24 +142,19 @@ impl InteractionPlugin {
         }
     }
 
-    /// Change the root transformation and with that all pipeline elements. This concerns scaling and
-    /// moving the view.
+    /// Change the root transformation and with that all pipeline elements. This concerns scaling
+    /// and moving the view.
+    ///
+    /// Apply scaling (via scroll inputs) and translation (via mouse click-and-drag) to the entire
+    /// view by pressing a control key.
     fn root_transforms(
         mut root: Query<&mut Transform, With<RootTransform>>,
         mouse_position: Res<MousePosition>,
         mouse_buttons: Res<Input<MouseButton>>,
+        keys: Res<Input<KeyCode>>,
         mut mouse_wheels: EventReader<MouseWheel>,
         mut prev_position: Local<Option<Vec2>>,
-        interactions: Query<(
-            &MyInteraction,
-            Option<&TextValue>,
-            Option<&SidebarElement>,
-            Option<&Scroll>,
-            Option<&FloatingConnector>,
-            Option<&Effect>,
-            Option<&InputConnector>,
-            Option<&OutputConnector>,
-        )>,
+        interactions: Query<&MyInteraction>,
         windows: Res<Windows>,
         cam: Query<&Camera>,
     ) {
@@ -176,29 +167,8 @@ impl InteractionPlugin {
             }
         });
 
-        //TODO This is bad design. This system must check for other system to be not run. Better
-        // would be a pre-running system to organize which general type of interaction is executed:
-        // * element manipulation,
-        // * sidebar manipulation or
-        // * root manipulation.
-        //Ignore mouse wheel events if it was on a TextValue, SidebarElement or things with a scroll
-        // component (i.e. the sidebar).
-        let shall_affect_move = interactions.iter().all(|(i, t, s, se, f, e, inp, outp)| {
-            i == &MyInteraction::None
-                || (t.is_none() && s.is_none() && se.is_none() && f.is_none() && e.is_none())
-        });
-        let shall_affect_wheel = interactions.iter().all(|(i, t, s, se, f, e, inp, outp)| {
-            i == &MyInteraction::None
-                || (t.is_none()
-                    && s.is_none()
-                    && se.is_none()
-                    && f.is_none()
-                    && inp.is_none()
-                    && outp.is_none())
-        });
-
         if let Some(mut transform) = root.iter_mut().next() {
-            if shall_affect_wheel {
+            if apply_to_root(keys) {
                 // Scaling (at cursor position).
                 if scale_units.abs() > 0.5 {
                     let window = windows.get_primary().unwrap();
@@ -218,7 +188,7 @@ impl InteractionPlugin {
                 }
             }
 
-            if shall_affect_move {
+            if interactions.iter().all(|i| i == &MyInteraction::None) {
                 // Dragging
                 if mouse_buttons.pressed(MouseButton::Left) {
                     let current_position = mouse_position.position;
@@ -241,15 +211,23 @@ impl InteractionPlugin {
         mut inputs: EventReader<MouseWheel>,
         mut hovered: Query<(Entity, &mut Transform, &MyInteraction, &mut Scroll)>,
         children: Query<(&Parent, &MyInteraction), With<SidebarElement>>,
+        keys: Res<Input<KeyCode>>,
     ) {
-        for MouseWheel { y, unit, .. } in inputs.iter() {
-            let delta = SCROLL_MULTIPLIER
-                * y
-                * match unit {
-                    MouseScrollUnit::Line => LINE_HEIGHT,
-                    // 1.0 is the pixel size because the camera is using Window coordinates.
-                    MouseScrollUnit::Pixel => 1.0,
-                };
+        // Always read the events as they are stored up if not.
+        let scale_units = inputs
+            .iter()
+            .map(|MouseWheel { y, unit, .. }| {
+                SCROLL_MULTIPLIER
+                    * y
+                    * match unit {
+                        MouseScrollUnit::Line => LINE_HEIGHT,
+                        // 1.0 is the pixel size because the camera is using Window coordinates.
+                        MouseScrollUnit::Pixel => 1.0,
+                    }
+            })
+            .sum::<f32>();
+
+        if !apply_to_root(keys) {
             let direct = hovered
                 .iter()
                 .filter(|(_, _, i, _)| i == &&MyInteraction::Hover)
@@ -265,12 +243,12 @@ impl InteractionPlugin {
                         range,
                         position,
                     } = &mut *scroll;
-                    let point = if delta > 0.0 {
+                    let point = if scale_units > 0.0 {
                         *position + *size
                     } else {
                         *position
                     };
-                    let bounded_delta = (point + delta).clamp(range.start, range.end) - point;
+                    let bounded_delta = (point + scale_units).clamp(range.start, range.end) - point;
                     *position += bounded_delta;
                     *transform = *transform
                         * Transform::from_translation(Vec3::new(0.0, bounded_delta, 0.0));
@@ -278,6 +256,10 @@ impl InteractionPlugin {
             }
         }
     }
+}
+
+fn apply_to_root(keys: Res<Input<KeyCode>>) -> bool {
+    keys.pressed(KeyCode::LControl) || keys.pressed(KeyCode::RControl)
 }
 
 /// A component to enable scrolling functionality on an entity.
