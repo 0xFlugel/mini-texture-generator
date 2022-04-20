@@ -1,5 +1,5 @@
 use crate::{
-    delete_connection, Connection, Effect, ElementSize, InputConnector, InputConnectors,
+    delete_connection, Connection, Effect, ElementSize, Force, InputConnector, InputConnectors,
     InteractionBundle, MyInteraction, MyRaycastSet, OutputConnector, OutputConnectors,
     PipelineElementBundle, TextFieldBundle, TextValue, ValueBinding, DEFAULT_FONT_SIZE,
     IO_PAD_SIZE, LINE_HEIGHT, LOCAL_TO_GPU_BYTE_ORDER, TEXTURE_FORMAT,
@@ -366,6 +366,7 @@ pub(crate) fn create_pipeline_element(
     }
 
     cmds.entity(element)
+        .insert(Force)
         .push_children(&inputs)
         .push_children(&outputs)
         // Overwrite empty defaults with actual data.

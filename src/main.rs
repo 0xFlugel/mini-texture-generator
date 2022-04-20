@@ -146,9 +146,70 @@ fn main() {
         .add_system(util::image_modified_detection)
         .add_system(save_image)
         .add_system(right_click_deletes_element)
-        .add_system(trickle_down_component::<Disabled>);
+        .add_system(trickle_down_component::<Disabled>)
+        .add_system(push_elements_apart);
     app.run();
 }
+
+/// A system to have elements push each other away when they overlap.
+fn push_elements_apart(
+    mut entities: Query<
+        (Entity, &mut Transform, &ElementSize),
+        (With<Force>, Without<Disabled>, Without<Dragging>),
+    >,
+) {
+    fn overlap_force(
+        a: (Entity, &Transform, &ElementSize),
+        b: (Entity, &Transform, &ElementSize),
+    ) -> Option<Vec2> {
+        const VELOCITY_CONSTANT: f32 = 1.0 / 32.0;
+        const MARGIN: f32 = 10.0;
+
+        let (_, ta, sa) = a;
+        let (_, tb, sb) = b;
+        let center_a = ta.translation.truncate();
+        let center_b = tb.translation.truncate();
+        let diff = center_a - center_b;
+        let x_overlap = (diff.x.abs() - (sa.0.width + sb.0.width + MARGIN) / 2.0)
+            .min(0.0)
+            .copysign(diff.x);
+        let y_overlap = (diff.y.abs() - (sa.0.height + sb.0.height + MARGIN) / 2.0)
+            .min(0.0)
+            .copysign(diff.y);
+        if x_overlap.abs() > 1e-6 && y_overlap.abs() > 1e-6 {
+            let dir = diff.normalize();
+            let distance = Vec2::new(x_overlap, 0.0).dot(dir) + Vec2::new(0.0, y_overlap).dot(dir);
+            Some(dir * distance * VELOCITY_CONSTANT)
+        } else {
+            None
+        }
+    }
+
+    //TODO: this is very slow. use sorting with x-overlap then y-overlap to (more) efficiently find
+    // them. implementing an R*-tree is probably not worth it.
+    let overlaps = entities
+        .iter()
+        .map(|e| {
+            let total_force = entities
+                .iter()
+                .filter(|f| e.0 != f.0)
+                .filter_map(|f| overlap_force(e, f))
+                .reduce(|a, b| a + b);
+            (e.0, total_force)
+        })
+        .collect::<Vec<_>>();
+    for (entity, total_force) in overlaps {
+        if let Some(total_force) = total_force {
+            entities.get_mut(entity).unwrap().1.translation += total_force.extend(0.0);
+        }
+    }
+}
+
+/// A marker for entities that push each other apart.
+///
+/// See [push_elements_apart].
+#[derive(Component)]
+struct Force;
 
 /// A marker for non-interactive entities.
 #[derive(Clone, Component)]
