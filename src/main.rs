@@ -145,8 +145,24 @@ fn main() {
         .add_system(update_texture.after(TextEntry::UpdateBinding))
         .add_system(util::image_modified_detection)
         .add_system(save_image)
-        .add_system(right_click_deletes_element);
+        .add_system(right_click_deletes_element)
+        .add_system(trickle_down_component::<Disabled>);
     app.run();
+}
+
+/// A marker for non-interactive entities.
+#[derive(Clone, Component)]
+struct Disabled;
+
+fn trickle_down_component<T: Component + Clone>(
+    mut cmds: Commands,
+    sources: Query<(&T, &Children), Added<Disabled>>,
+) {
+    for (component, children) in sources.iter() {
+        for child in children.iter() {
+            cmds.entity(*child).insert(component.clone());
+        }
+    }
 }
 
 fn shutdown(closing: EventReader<WindowCloseRequested>, mut meta_events: EventWriter<MetaEvent>) {
@@ -712,7 +728,9 @@ fn setup(
             (element_mesh, ElementSize(Size::new(width, height))),
             true,
         );
-        cmds.entity(child).insert(SidebarElement(effect.clone()));
+        cmds.entity(child)
+            .insert(SidebarElement(effect.clone()))
+            .insert(Disabled);
         cmds.entity(sidebar).add_child(child);
 
         line_offset += this_lines + 1; // 1 spacer line

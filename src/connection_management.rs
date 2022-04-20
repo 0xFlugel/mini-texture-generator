@@ -1,5 +1,5 @@
 use crate::interaction::{Draggable, Dragging, MousePosition, MyInteraction, MyRaycastSet};
-use crate::{Dirty, RootTransform, SidebarElement, HIGHLIGHT_SCALING, LINE_WIDTH};
+use crate::{Dirty, RootTransform, SidebarElement, HIGHLIGHT_SCALING, LINE_WIDTH, Disabled};
 use bevy::ecs::query::QueryEntityError;
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
@@ -22,7 +22,7 @@ pub(crate) fn start_connecting(
             &GlobalTransform,
             &mut OutputConnector,
         ),
-        (Changed<MyInteraction>, Without<SidebarElement>),
+        (Changed<MyInteraction>, Without<SidebarElement>, Without<Disabled>),
     >,
     meshes: Query<&Mesh2dHandle>,
     materials: Query<&Handle<ColorMaterial>>,
