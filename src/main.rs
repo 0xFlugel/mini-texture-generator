@@ -673,7 +673,9 @@ fn setup(
     );
     let sidebar = cmds
         .spawn_bundle(ColorMesh2dBundle {
-            transform: Transform::from_translation(sidebar_center.extend(0.0)),
+            /// Sidebar at Z=999 (out of 1000) which is the highest visible position (with children
+            /// having up to +1 relative z position).
+            transform: Transform::from_translation(sidebar_center.extend(999.0)),
             mesh: Mesh2dHandle(mesh_assets.add(Mesh::from(shape::Quad::new(Vec2::new(
                 sidebar_width,
                 sidebar_height,

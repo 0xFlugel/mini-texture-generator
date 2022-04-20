@@ -253,7 +253,7 @@ pub(crate) fn create_pipeline_element(
             size: element_size,
             effect: effect.clone(),
             color_mesh_bundle: ColorMesh2dBundle {
-                transform: Transform::from_translation(translation.extend(1.0)),
+                transform: Transform::from_translation(translation.extend(0.01)),
                 mesh: element_mesh,
                 material: material.clone(),
                 ..Default::default()
